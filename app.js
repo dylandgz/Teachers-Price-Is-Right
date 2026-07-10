@@ -612,7 +612,7 @@ function renderGame() {
 
   const suspenseHtml = inSuspense
     ? `
-      <div class="card suspense-card">
+      <div class="wheel-overlay">
         <div class="wheel-pointer"></div>
         <div class="wheel-wrap">
           <div class="prize-wheel"></div>
@@ -647,13 +647,13 @@ function renderGame() {
       ${!state.revealed && !inSuspense ? renderTimerSide() : ''}
     </div>
 
-    ${suspenseHtml}
-
     ${bannerHtml}
 
-    ${!inSuspense ? `<div class="guess-grid">${guessCardsHtml}</div>` : ''}
+    <div class="guess-grid">${guessCardsHtml}</div>
 
     ${actionHtml}
+
+    ${suspenseHtml}
 
     <div class="card">
       <div class="scoreboard">
