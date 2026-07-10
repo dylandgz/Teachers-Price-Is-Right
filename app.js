@@ -33,9 +33,12 @@ function defaultState() {
     activeTiebreakerItem: null,
     guesses: [null, null, null],
     revealed: false,
+    revealPhase: 'idle',
     lastRoundPoints: [null, null, null],
     lastRoundDiff: [null, null, null],
-    lastRoundClosestIndices: []
+    lastRoundClosestIndices: [],
+    timerSecondsLeft: null,
+    timerRunning: false
   };
 }
 
@@ -71,7 +74,7 @@ function ensureRoundRows() {
   const count = state.roundCount;
   const rows = state.rounds.slice(0, count);
   while (rows.length < count) {
-    rows.push({ name: '', price: '', description: '', image: null });
+    rows.push({ name: '', price: '', description: '', image: null, timeLimit: 60 });
   }
   state.rounds = rows;
 }
@@ -82,6 +85,110 @@ function fallbackIconSvg(size) {
     <path d="M3 8l9-4 9 4" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
     <path d="M12 4v16M3 8h18" stroke="currentColor" stroke-width="1.6"/>
   </svg>`;
+}
+
+/* ---------------- Audio (synthesized, no external assets) ---------------- */
+
+let audioCtx = null;
+
+function getAudioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!audioCtx) audioCtx = new AC();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function playTone(freq, startTime, duration, type, gainPeak) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.value = freq;
+  const t0 = ctx.currentTime + startTime;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(gainPeak || 0.2, t0 + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.05);
+}
+
+function playDing() {
+  playTone(880, 0, 0.35, 'sine', 0.25);
+  playTone(1318.5, 0.05, 0.4, 'sine', 0.2);
+}
+
+function playTick() {
+  playTone(660, 0, 0.12, 'square', 0.12);
+}
+
+function playFanfare() {
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  notes.forEach((f, i) => playTone(f, i * 0.18, 0.3, 'square', 0.15));
+  playTone(1046.5, notes.length * 0.18, 0.7, 'triangle', 0.22);
+}
+
+/* ---------------- Round timer ---------------- */
+
+let timerIntervalId = null;
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function clearRoundTimer() {
+  if (timerIntervalId) {
+    clearInterval(timerIntervalId);
+    timerIntervalId = null;
+  }
+  state.timerRunning = false;
+}
+
+function initTimerForCurrentItem() {
+  clearRoundTimer();
+  const item = getCurrentItem();
+  const limit = item && item.timeLimit ? Number(item.timeLimit) : 0;
+  state.timerSecondsLeft = limit > 0 ? limit : null;
+}
+
+function startTimer() {
+  if (timerIntervalId || !state.timerSecondsLeft) return;
+  state.timerRunning = true;
+  save();
+  const btn = document.getElementById('timer-toggle-btn');
+  if (btn) btn.textContent = 'Pause';
+  const wrap = document.getElementById('timer-wrap');
+  if (wrap) wrap.classList.remove('time-up');
+  timerIntervalId = setInterval(() => {
+    if (state.timerSecondsLeft <= 0) return;
+    state.timerSecondsLeft -= 1;
+    const valueEl = document.getElementById('timer-value');
+    if (valueEl) valueEl.textContent = formatTime(state.timerSecondsLeft);
+    if (state.timerSecondsLeft <= 3 && state.timerSecondsLeft > 0) playTick();
+    if (state.timerSecondsLeft === 0) {
+      clearInterval(timerIntervalId);
+      timerIntervalId = null;
+      state.timerRunning = false;
+      save();
+      const wrapEl = document.getElementById('timer-wrap');
+      if (wrapEl) wrapEl.classList.add('time-up');
+      const toggleBtn = document.getElementById('timer-toggle-btn');
+      if (toggleBtn) toggleBtn.textContent = 'Start timer';
+    } else {
+      save();
+    }
+  }, 1000);
+}
+
+function pauseTimer() {
+  clearRoundTimer();
+  save();
+  const btn = document.getElementById('timer-toggle-btn');
+  if (btn) btn.textContent = 'Resume';
 }
 
 /* ---------------- Rendering ---------------- */
@@ -95,13 +202,39 @@ function render() {
     case 'game': app.innerHTML = renderGame(); bindGame(); break;
     case 'celebration': app.innerHTML = renderCelebration(); bindCelebration(); break;
   }
+  if (state.stage !== 'setup2') {
+    app.insertAdjacentHTML('beforeend', footerHtml());
+    bindFooter();
+  }
+}
+
+function footerHtml() {
+  return `
+    <div class="app-footer">
+      <button class="btn btn-reset-game" id="reset-game-btn">Reset game</button>
+    </div>
+  `;
+}
+
+function bindFooter() {
+  const btn = document.getElementById('reset-game-btn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      if (confirm('Reset the entire game? This erases all teams, items, scores, and progress and cannot be undone.')) {
+        clearRoundTimer();
+        localStorage.removeItem(STORAGE_KEY);
+        state = defaultState();
+        render();
+      }
+    });
+  }
 }
 
 function headerHtml(badgeText) {
   return `
     <div class="app-header">
       <img class="logo" src="assets/teachers-fcu-logo.png" alt="Teachers FCU" />
-      <h1>The Price Is Right</h1>
+      <h1>The Price Is Right: Teachers FCU Cash Bash</h1>
       ${badgeText ? `<div class="round-badge">${badgeText}</div>` : ''}
     </div>
   `;
@@ -180,6 +313,10 @@ function renderItemRow(item, idx, isTiebreaker) {
         <label>Price ($)</label>
         <input type="number" min="0" data-role="price" data-prefix="${prefix}" data-idx="${idx}" value="${item.price === '' || item.price === null || item.price === undefined ? '' : item.price}" placeholder="0" />
       </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Timer (sec)</label>
+        <input type="number" min="0" data-role="timeLimit" data-prefix="${prefix}" data-idx="${idx}" value="${item.timeLimit === '' || item.timeLimit === null || item.timeLimit === undefined ? '' : item.timeLimit}" placeholder="60" />
+      </div>
       <div class="thumb-wrap">
         <label>Image</label>
         ${thumb}
@@ -195,7 +332,7 @@ function renderSetup2() {
     ${headerHtml()}
     <div class="card">
       <h2>Preload items</h2>
-      <p class="hint">One item per round. Add a name, price, short description, and optional photo.</p>
+      <p class="hint">One item per round. Add a name, price, short description, optional photo, and a guess timer (in seconds). Leave the timer blank or 0 for no time limit. On game day, you'll just press "Start timer" to run the preset time for that round.</p>
       <div class="btn-row" style="margin-top:0; margin-bottom:10px;">
         <button class="btn btn-secondary" id="fill-sample">Fill with sample items</button>
       </div>
@@ -230,7 +367,7 @@ function fileToDataUrl(file) {
 
 function bindSetup2() {
   if (state.tiebreakerQueue.length === 0) {
-    state.tiebreakerQueue.push({ name: '', price: '', description: '', image: null });
+    state.tiebreakerQueue.push({ name: '', price: '', description: '', image: null, timeLimit: 45 });
     save();
   }
 
@@ -238,12 +375,12 @@ function bindSetup2() {
     return prefix === 'tb' ? state.tiebreakerQueue : state.rounds;
   }
 
-  document.querySelectorAll('[data-role="name"], [data-role="description"], [data-role="price"]').forEach(input => {
+  document.querySelectorAll('[data-role="name"], [data-role="description"], [data-role="price"], [data-role="timeLimit"]').forEach(input => {
     input.addEventListener('input', () => {
       const arr = targetArray(input.dataset.prefix);
       const idx = parseInt(input.dataset.idx, 10);
       const role = input.dataset.role;
-      if (role === 'price') {
+      if (role === 'price' || role === 'timeLimit') {
         arr[idx][role] = input.value === '' ? '' : Number(input.value);
       } else {
         arr[idx][role] = input.value;
@@ -268,14 +405,14 @@ function bindSetup2() {
   document.getElementById('fill-sample').addEventListener('click', () => {
     state.rounds = state.rounds.map((r, i) => {
       const sample = SAMPLE_ITEMS[i % SAMPLE_ITEMS.length];
-      return { name: sample.name, price: sample.price, description: sample.description, image: r.image || null };
+      return { name: sample.name, price: sample.price, description: sample.description, image: r.image || null, timeLimit: r.timeLimit || 60 };
     });
     save();
     render();
   });
 
   document.getElementById('add-tiebreaker').addEventListener('click', () => {
-    state.tiebreakerQueue.push({ name: '', price: '', description: '', image: null });
+    state.tiebreakerQueue.push({ name: '', price: '', description: '', image: null, timeLimit: 45 });
     save();
     render();
   });
@@ -348,12 +485,14 @@ function bindReady() {
     setState({ stage: 'setup2' });
   });
   document.getElementById('start-game').addEventListener('click', () => {
+    state.stage = 'game';
+    state.currentRoundIndex = 0;
+    state.isTiebreaker = false;
+    initTimerForCurrentItem();
     setState({
-      stage: 'game',
-      currentRoundIndex: 0,
-      isTiebreaker: false,
       guesses: [null, null, null],
       revealed: false,
+      revealPhase: 'idle',
       lastRoundPoints: [null, null, null],
       lastRoundDiff: [null, null, null],
       lastRoundClosestIndices: []
@@ -373,11 +512,45 @@ function isTeamEligible(i) {
   return state.tiebreakerEligibleTeamIndices.includes(i);
 }
 
+function renderTimerSide() {
+  if (state.timerSecondsLeft === null || state.timerSecondsLeft === undefined) return '';
+  const item = getCurrentItem();
+  const running = state.timerRunning;
+  const timeUp = !running && state.timerSecondsLeft === 0;
+  const isAtFull = state.timerSecondsLeft === Number(item.timeLimit);
+  const toggleLabel = running ? 'Pause' : (isAtFull ? 'Start timer' : 'Resume');
+  return `
+    <div class="timer-side ${timeUp ? 'time-up' : ''}" id="timer-wrap">
+      <div class="timer-value" id="timer-value">${formatTime(state.timerSecondsLeft)}</div>
+      <div class="timer-side-btns">
+        <button class="btn btn-primary" id="timer-toggle-btn">${toggleLabel}</button>
+        <button class="btn btn-secondary" id="timer-reset-btn">Reset</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderRoundConfetti() {
+  if (state.lastRoundClosestIndices.length === 0) return '';
+  const colors = state.lastRoundClosestIndices.map(i => state.teams[i].color).concat(['#F7A600']);
+  let html = '';
+  for (let i = 0; i < 3; i++) {
+    const left = 35 + Math.random() * 30;
+    const delay = Math.random() * 0.3;
+    const color = colors[i % colors.length];
+    const rotate = Math.random() * 360;
+    html += `<div class="round-confetti-piece" style="left:${left}%; background:${color}; animation-delay:${delay}s; transform:rotate(${rotate}deg);"></div>`;
+  }
+  return html;
+}
+
 function renderGame() {
   const item = getCurrentItem();
   const badge = state.isTiebreaker
     ? 'Tiebreaker round'
     : `Round ${state.currentRoundIndex + 1} of ${state.roundCount}`;
+
+  const inSuspense = state.revealPhase === 'suspense';
 
   const imageHtml = item.image
     ? `<img class="item-image" src="${item.image}" alt="${escapeHtml(item.name)}" />`
@@ -398,7 +571,7 @@ function renderGame() {
     } else {
       bannerText = `${names.join(' & ')} tied for closest this round!`;
     }
-    bannerHtml = `<div class="reveal-banner">${bannerText}</div>`;
+    bannerHtml = `<div class="reveal-banner">${bannerText}</div>${renderRoundConfetti()}`;
   }
 
   const guessCardsHtml = state.teams.map((t, i) => {
@@ -410,7 +583,7 @@ function renderGame() {
     } else if (!state.revealed) {
       bodyHtml = `
         <label for="guess-${i}">Guess ($)</label>
-        <input type="number" min="0" id="guess-${i}" data-idx="${i}" value="${guessVal === null || guessVal === undefined ? '' : guessVal}" placeholder="Enter guess" />
+        <input type="number" min="0" id="guess-${i}" data-idx="${i}" value="${guessVal === null || guessVal === undefined ? '' : guessVal}" placeholder="Enter guess" ${inSuspense ? 'disabled' : ''} />
       `;
     } else {
       const pts = state.lastRoundPoints[i];
@@ -437,6 +610,31 @@ function renderGame() {
 
   const nextLabel = computeNextButtonLabel();
 
+  const suspenseHtml = inSuspense
+    ? `
+      <div class="card suspense-card">
+        <div class="wheel-pointer"></div>
+        <div class="wheel-wrap">
+          <div class="prize-wheel"></div>
+          <img class="wheel-logo" src="assets/teachers-fcu-logo.png" alt="" />
+        </div>
+        <div class="suspense-text" id="suspense-text">Spinning&hellip;</div>
+      </div>
+    `
+    : '';
+
+  const actionHtml = inSuspense
+    ? ''
+    : `
+      <div class="card">
+        <div class="btn-row" style="margin-top:0;">
+          ${!state.revealed
+            ? `<button class="btn btn-primary" id="reveal-btn">Reveal price</button>`
+            : `<button class="btn btn-primary" id="next-round-btn">${nextLabel}</button>`}
+        </div>
+      </div>
+    `;
+
   return `
     ${headerHtml(badge)}
     <div class="card item-card">
@@ -446,19 +644,16 @@ function renderGame() {
         <p>${escapeHtml(item.description) || ''}</p>
         ${priceHtml}
       </div>
+      ${!state.revealed && !inSuspense ? renderTimerSide() : ''}
     </div>
+
+    ${suspenseHtml}
 
     ${bannerHtml}
 
-    <div class="guess-grid">${guessCardsHtml}</div>
+    ${!inSuspense ? `<div class="guess-grid">${guessCardsHtml}</div>` : ''}
 
-    <div class="card">
-      <div class="btn-row" style="margin-top:0;">
-        ${!state.revealed
-          ? `<button class="btn btn-primary" id="reveal-btn">Reveal price</button>`
-          : `<button class="btn btn-primary" id="next-round-btn">${nextLabel}</button>`}
-      </div>
-    </div>
+    ${actionHtml}
 
     <div class="card">
       <div class="scoreboard">
@@ -496,6 +691,8 @@ function tiebreakerStillTied() {
 }
 
 function bindGame() {
+  if (state.revealPhase === 'suspense') return;
+
   if (!state.revealed) {
     document.querySelectorAll('.guess-card input[type="number"]').forEach(input => {
       input.addEventListener('input', () => {
@@ -505,11 +702,49 @@ function bindGame() {
       });
     });
     const revealBtn = document.getElementById('reveal-btn');
-    if (revealBtn) revealBtn.addEventListener('click', doReveal);
+    if (revealBtn) revealBtn.addEventListener('click', startReveal);
+
+    const timerToggleBtn = document.getElementById('timer-toggle-btn');
+    if (timerToggleBtn) {
+      timerToggleBtn.addEventListener('click', () => {
+        if (state.timerRunning) pauseTimer();
+        else startTimer();
+      });
+    }
+    const timerResetBtn = document.getElementById('timer-reset-btn');
+    if (timerResetBtn) {
+      timerResetBtn.addEventListener('click', () => {
+        initTimerForCurrentItem();
+        render();
+      });
+    }
   } else {
     const nextBtn = document.getElementById('next-round-btn');
     if (nextBtn) nextBtn.addEventListener('click', advanceRound);
   }
+}
+
+function startReveal() {
+  clearRoundTimer();
+  getAudioContext();
+  setState({ revealPhase: 'suspense' });
+  let count = 3;
+  const tick = () => {
+    const el = document.getElementById('suspense-text');
+    if (!el) return;
+    if (count > 0) {
+      el.textContent = String(count);
+      playTick();
+      count -= 1;
+      setTimeout(tick, 700);
+    } else {
+      el.textContent = 'And the price is...';
+      setTimeout(() => {
+        doReveal();
+      }, 900);
+    }
+  };
+  setTimeout(tick, 1300);
 }
 
 function doReveal() {
@@ -554,8 +789,10 @@ function doReveal() {
     ? underOrEqual.filter(g => g.guess === distinctValues[0]).map(g => g.i)
     : [];
 
+  playDing();
   setState({
     revealed: true,
+    revealPhase: 'idle',
     lastRoundPoints,
     lastRoundDiff,
     lastRoundClosestIndices: closestIndices
@@ -580,17 +817,22 @@ function pullTiebreakerItem() {
 }
 
 function advanceRound() {
+  clearRoundTimer();
+
   if (state.isTiebreaker) {
     if (tiebreakerStillTied()) {
+      state.activeTiebreakerItem = pullTiebreakerItem();
+      initTimerForCurrentItem();
       setState({
-        activeTiebreakerItem: pullTiebreakerItem(),
         guesses: [null, null, null],
         revealed: false,
+        revealPhase: 'idle',
         lastRoundPoints: [null, null, null],
         lastRoundDiff: [null, null, null],
         lastRoundClosestIndices: []
       });
     } else {
+      playFanfare();
       setState({ stage: 'celebration' });
     }
     return;
@@ -598,10 +840,12 @@ function advanceRound() {
 
   const isFinalRegularRound = state.currentRoundIndex >= state.roundCount - 1;
   if (!isFinalRegularRound) {
+    state.currentRoundIndex += 1;
+    initTimerForCurrentItem();
     setState({
-      currentRoundIndex: state.currentRoundIndex + 1,
       guesses: [null, null, null],
       revealed: false,
+      revealPhase: 'idle',
       lastRoundPoints: [null, null, null],
       lastRoundDiff: [null, null, null],
       lastRoundClosestIndices: []
@@ -612,17 +856,20 @@ function advanceRound() {
   if (overallTie()) {
     const max = Math.max(...state.teams.map(t => t.score));
     const tiedIndices = state.teams.map((t, i) => i).filter(i => state.teams[i].score === max);
+    state.isTiebreaker = true;
+    state.tiebreakerEligibleTeamIndices = tiedIndices;
+    state.activeTiebreakerItem = pullTiebreakerItem();
+    initTimerForCurrentItem();
     setState({
-      isTiebreaker: true,
-      tiebreakerEligibleTeamIndices: tiedIndices,
-      activeTiebreakerItem: pullTiebreakerItem(),
       guesses: [null, null, null],
       revealed: false,
+      revealPhase: 'idle',
       lastRoundPoints: [null, null, null],
       lastRoundDiff: [null, null, null],
       lastRoundClosestIndices: []
     });
   } else {
+    playFanfare();
     setState({ stage: 'celebration' });
   }
 }
@@ -681,6 +928,7 @@ function renderCelebration() {
 
 function bindCelebration() {
   document.getElementById('play-again').addEventListener('click', () => {
+    clearRoundTimer();
     state.teams.forEach(t => { t.score = 0; });
     setState({
       stage: 'ready',
@@ -691,9 +939,12 @@ function bindCelebration() {
       activeTiebreakerItem: null,
       guesses: [null, null, null],
       revealed: false,
+      revealPhase: 'idle',
       lastRoundPoints: [null, null, null],
       lastRoundDiff: [null, null, null],
-      lastRoundClosestIndices: []
+      lastRoundClosestIndices: [],
+      timerSecondsLeft: null,
+      timerRunning: false
     });
   });
 }
