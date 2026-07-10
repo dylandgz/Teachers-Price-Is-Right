@@ -38,7 +38,8 @@ function defaultState() {
     lastRoundDiff: [null, null, null],
     lastRoundClosestIndices: [],
     timerSecondsLeft: null,
-    timerRunning: false
+    timerRunning: false,
+    muted: false
   };
 }
 
@@ -100,6 +101,7 @@ function getAudioContext() {
 }
 
 function playTone(freq, startTime, duration, type, gainPeak) {
+  if (state.muted) return;
   const ctx = getAudioContext();
   if (!ctx) return;
   const osc = ctx.createOscillator();
@@ -115,19 +117,74 @@ function playTone(freq, startTime, duration, type, gainPeak) {
   osc.stop(t0 + duration + 0.05);
 }
 
-function playDing() {
-  playTone(880, 0, 0.35, 'sine', 0.25);
-  playTone(1318.5, 0.05, 0.4, 'sine', 0.2);
-}
-
 function playTick() {
   playTone(660, 0, 0.12, 'square', 0.12);
 }
 
-function playFanfare() {
-  const notes = [523.25, 659.25, 783.99, 1046.5];
-  notes.forEach((f, i) => playTone(f, i * 0.18, 0.3, 'square', 0.15));
-  playTone(1046.5, notes.length * 0.18, 0.7, 'triangle', 0.22);
+/* ---------------- Round/game winner sound effects (local audio files) ---------------- */
+
+const ROUND_WINNER_SOUND_SRC = 'assets/audio/dingding.mp3';
+const GAME_WINNER_SOUND_SRC = 'assets/audio/winner-sound.mp3';
+
+let roundWinnerSoundEl = null;
+let gameWinnerSoundEl = null;
+
+function playRoundWinnerSound() {
+  if (state.muted) return;
+  if (!roundWinnerSoundEl) {
+    roundWinnerSoundEl = new Audio(ROUND_WINNER_SOUND_SRC);
+    roundWinnerSoundEl.volume = 0.6;
+  }
+  roundWinnerSoundEl.currentTime = 0;
+  roundWinnerSoundEl.play().catch(() => {});
+}
+
+function playGameWinnerSound() {
+  if (state.muted) return;
+  if (!gameWinnerSoundEl) {
+    gameWinnerSoundEl = new Audio(GAME_WINNER_SOUND_SRC);
+    gameWinnerSoundEl.volume = 0.7;
+    gameWinnerSoundEl.addEventListener('ended', () => {
+      if (state.stage === 'celebration') startMusic();
+    });
+  }
+  gameWinnerSoundEl.currentTime = 0;
+  gameWinnerSoundEl.play().catch(() => {});
+}
+
+/* ---------------- Background music (local audio file) ---------------- */
+
+const BG_MUSIC_SRC = 'assets/audio/background-music.mp3';
+const BG_MUSIC_VOLUME = 0.35;
+
+let bgMusicEl = null;
+
+function getBgMusicEl() {
+  if (!bgMusicEl) {
+    bgMusicEl = new Audio(BG_MUSIC_SRC);
+    bgMusicEl.loop = true;
+    bgMusicEl.volume = BG_MUSIC_VOLUME;
+    bgMusicEl.muted = state.muted;
+  }
+  return bgMusicEl;
+}
+
+function startMusic() {
+  const el = getBgMusicEl();
+  el.muted = state.muted;
+  if (!el.paused) return;
+  el.play().catch(() => {});
+}
+
+function stopMusic() {
+  if (!bgMusicEl) return;
+  bgMusicEl.pause();
+}
+
+function setMuted(muted) {
+  state.muted = muted;
+  save();
+  if (bgMusicEl) bgMusicEl.muted = muted;
 }
 
 /* ---------------- Round timer ---------------- */
@@ -201,6 +258,12 @@ function render() {
     case 'ready': app.innerHTML = renderReady(); bindReady(); break;
     case 'game': app.innerHTML = renderGame(); bindGame(); break;
     case 'celebration': app.innerHTML = renderCelebration(); bindCelebration(); break;
+  }
+  const musicShouldPlay = state.stage === 'game' && state.revealPhase !== 'suspense' && state.revealPhase !== 'winner';
+  if (musicShouldPlay) {
+    startMusic();
+  } else {
+    stopMusic();
   }
   if (state.stage !== 'setup2') {
     app.insertAdjacentHTML('beforeend', footerHtml());
@@ -530,6 +593,33 @@ function renderTimerSide() {
   `;
 }
 
+function renderWinnerPopup() {
+  const names = state.lastRoundClosestIndices.map(i => state.teams[i].name);
+  const colors = state.lastRoundClosestIndices.map(i => state.teams[i].color);
+  const accentColor = colors[0] || '#F7A600';
+  let title;
+  let subtitle;
+  if (names.length === 0) {
+    title = 'No one nailed it this round';
+    subtitle = 'On to the next item!';
+  } else if (names.length === 1) {
+    title = `${escapeHtml(names[0])} wins the round!`;
+    subtitle = 'Closest guess without going over';
+  } else {
+    title = `${names.map(escapeHtml).join(' & ')} tie for the round!`;
+    subtitle = 'Both closest without going over';
+  }
+  return `
+    <div class="winner-popup">
+      <div class="winner-popup-card" style="border-color:${accentColor};">
+        <div class="winner-popup-emoji">🎉</div>
+        <div class="winner-popup-title" style="color:${accentColor};">${title}</div>
+        <div class="winner-popup-subtitle">${subtitle}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderRoundConfetti() {
   if (state.lastRoundClosestIndices.length === 0) return '';
   const colors = state.lastRoundClosestIndices.map(i => state.teams[i].color).concat(['#F7A600']);
@@ -654,6 +744,8 @@ function renderGame() {
     ${actionHtml}
 
     ${suspenseHtml}
+
+    ${state.revealPhase === 'winner' ? renderWinnerPopup() : ''}
 
     <div class="card">
       <div class="scoreboard">
@@ -789,14 +881,17 @@ function doReveal() {
     ? underOrEqual.filter(g => g.guess === distinctValues[0]).map(g => g.i)
     : [];
 
-  playDing();
+  playRoundWinnerSound();
   setState({
     revealed: true,
-    revealPhase: 'idle',
+    revealPhase: 'winner',
     lastRoundPoints,
     lastRoundDiff,
     lastRoundClosestIndices: closestIndices
   });
+  setTimeout(() => {
+    if (state.stage === 'game' && state.revealPhase === 'winner') setState({ revealPhase: 'idle' });
+  }, 2200);
 }
 
 function pullTiebreakerItem() {
@@ -832,7 +927,7 @@ function advanceRound() {
         lastRoundClosestIndices: []
       });
     } else {
-      playFanfare();
+      playGameWinnerSound();
       setState({ stage: 'celebration' });
     }
     return;
@@ -869,7 +964,7 @@ function advanceRound() {
       lastRoundClosestIndices: []
     });
   } else {
-    playFanfare();
+    playGameWinnerSound();
     setState({ stage: 'celebration' });
   }
 }
@@ -961,4 +1056,29 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+/* ---------------- Persistent mute control ---------------- */
+
+function updateMuteButton(btn) {
+  btn.textContent = state.muted ? '🔇' : '🔊';
+  btn.setAttribute('aria-label', state.muted ? 'Unmute sound' : 'Mute sound');
+  btn.title = state.muted ? 'Unmute sound' : 'Mute sound';
+}
+
+function initMuteButton() {
+  if (document.getElementById('mute-toggle-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'mute-toggle-btn';
+  btn.className = 'mute-btn';
+  updateMuteButton(btn);
+  btn.addEventListener('click', () => {
+    getAudioContext();
+    setMuted(!state.muted);
+    updateMuteButton(btn);
+  });
+  document.body.appendChild(btn);
+}
+
+document.addEventListener('click', () => getAudioContext(), { once: true });
+
 render();
+initMuteButton();

@@ -1,205 +1,245 @@
 # Teachers FCU — "The Price Is Right" Game
 
-Build a browser-based, single-page party game modeled on The Price Is Right, branded
-for Teachers FCU. Three teams compete across several rounds guessing the price of an
+Browser-based, single-page party game modeled on The Price Is Right, branded for
+Teachers FCU. Three teams compete across several rounds guessing the price of an
 item; closest guess without going over scores the most points. Runs entirely in the
-browser (no backend, no database) so it can be run locally during development and
-hosted for free on GitHub Pages for game day.
+browser (no backend, no database).
+
+**Status: built and live.** Plain HTML/CSS/JS, deployed to GitHub Pages with an
+automated CI/CD pipeline — every push to `main` redeploys automatically.
+
+- Repo: `https://github.com/dylandgz/Teachers-Price-Is-Right`
+- Live site: `https://dylandgz.github.io/Teachers-Price-Is-Right/`
+- Deploy: `.github/workflows/deploy.yml` (GitHub Actions → `actions/deploy-pages`).
+  Pages source is set to "GitHub Actions" in repo settings, not "Deploy from a
+  branch" — don't switch that back or the workflow's deploys won't take effect.
 
 ## Tech stack
 
-- Plain HTML/CSS/JavaScript (no framework required) OR React + Vite if you prefer
-  component structure — either is fine, but keep it a fully static site with no
-  server-side code, since it needs to run as a static GitHub Pages site.
-- No external API calls, no backend. Everything runs client-side.
-- Use `localStorage` to auto-save setup progress (teams, rounds, items, images) so a
-  refresh on game day doesn't wipe out preloaded work. This is safe here (unlike a
-  sandboxed preview) since it's a real deployed site.
-- Images the organizer uploads should be read client-side via `FileReader` and stored
-  as base64 data URLs (in memory + localStorage). No file server needed.
+- Plain HTML/CSS/JavaScript, no framework, no build step. Files: `index.html`,
+  `style.css`, `app.js`. State lives in one module-level `state` object in
+  `app.js`; every stage renders by replacing `#app`'s `innerHTML` and rebinding
+  event listeners (see `render()`).
+- No external API calls, no backend. Background music and the two win-sound
+  effects are local `.mp3` files under `assets/audio/` (see "Background music &
+  sound effects" below); the countdown tick during the reveal suspense is still
+  synthesized client-side via the Web Audio API, no file needed for that one.
+- `localStorage` (key `tfcuPriceIsRightState`) auto-saves the entire app state,
+  not just setup — so a refresh mid-game on game day resumes where you left off,
+  not just setup progress.
+- Images the organizer uploads are read via `FileReader` and stored as base64 data
+  URLs in state (and therefore in `localStorage`).
 
 ## Brand assets
 
-- Logo file is provided at `assets/teachers-fcu-logo.png` — use this exact file, do
-  not recreate it. Display it a bit larger than a typical favicon-sized mark — around
-  40–48px tall in the header is a good target (bigger than a first draft might use).
-- Brand colors (use as CSS custom properties):
-  - `--tfcu-navy: #0F1F3D` — primary dark color, header text, card text, high-contrast
-    accents
-  - `--tfcu-blue: #123A66` — main background field for the whole game (the app should
-    sit on this blue, not a plain white or gray page background)
-  - `--tfcu-gold: #F7A600` — primary accent color: buttons, borders, badges, the "you
-    won" moments
+- Logo file lives at `assets/teachers-fcu-logo.png`, used as-is. Shown at ~44px
+  tall in the header, and also reused as the static center hub of the prize wheel
+  during the reveal sequence (see below).
+- Brand colors (CSS custom properties in `style.css`):
+  - `--tfcu-navy: #0F1F3D` — primary dark color, header text, card text
+  - `--tfcu-blue: #123A66` — page background the whole app sits on
+  - `--tfcu-gold: #F7A600` — primary accent: buttons, borders, badges, "you won"
   - `--tfcu-gold-tint: #FEF3DC` — light gold background for banners/callouts
-  - White (`#FFFFFF`) — card surfaces sitting on top of the blue background, for
-    contrast and legibility
-- Typography: a clean, modern sans-serif (system font stack is fine: e.g.
-  `-apple-system, "Segoe UI", Roboto, sans-serif`). Keep copy playful but
-  professional — this is a credit union event, not a kids' show. Sentence case
-  throughout, no ALL CAPS except small badges/labels.
-- Overall tone: fun and energetic, but polished — Teachers FCU is hosting this, so it
-  should feel like a nice internal event, not a cheap template.
+  - White (`#FFFFFF`) — card surfaces on top of the blue background
+- Typography: system font stack (`-apple-system, "Segoe UI", Roboto, sans-serif`).
+  Sentence case throughout, no ALL CAPS except small badges/labels.
+- App title in the header is **"The Price Is Right: Teachers FCU Cash Bash"**.
 
 ## App flow
 
-The app has four sequential stages. Stage 1–2 are "setup," done ahead of time by an
-organizer. Stage 3–4 are "game day," run live in front of the teams.
+Five sequential stages (`state.stage`): `setup1` → `setup2` → `ready` → `game` →
+`celebration`. Stages 1–2 are setup, done ahead of time; 3–5 are game day.
 
-### 1. Team & round setup (do this ahead of time)
+### 1. Team & round setup (`setup1`)
 
-- Inputs for exactly 3 team names (default placeholders: "Team 1", "Team 2",
-  "Team 3"). Give each team name input a colored left border/accent matching that
-  team's assigned color (see Team colors below) so it's visually consistent with the
-  rest of the app.
-- A number input for "how many rounds?" (default 5, min 1, max 20). Explain inline
-  that tiebreaker rounds are added automatically if the game ends tied.
-- "Next: add items" button moves to stage 2.
+- 3 team name inputs, each with a colored left border matching that team's color.
+- Round count input (default 5, min 1, max 20). Inline note that tiebreaker rounds
+  are added automatically if the game ends tied.
+- "Next: add items" → `setup2`.
 
-### 2. Preload items (do this ahead of time)
+### 2. Preload items (`setup2`)
 
-- One row per round (based on the round count from stage 1). Each row has:
-  - Item name (text)
-  - Price (number, dollars)
-  - Short description (text, one line)
-  - Image upload — a real file picker (`<input type="file" accept="image/*">`) that
-    reads the file from the organizer's computer via `FileReader` and shows a small
-    thumbnail preview inline. No image is fine — fall back to a generic gift-box icon
-    in the game view.
-- A "fill with sample items" button that populates all rows with placeholder demo
-  items/prices, purely so the organizer can test the flow without typing real data.
-  Sample items to use: 65" 4K smart TV ($649), stainless steel grill ($389), espresso
-  machine ($799), mountain bike ($459), weekend getaway package ($1,250), stand mixer
-  ($429), gaming laptop ($1,099), patio furniture set ($899) — cycle through this
-  list if there are more rounds than sample items.
-- Below the main item rows, a separate **"Tiebreaker items"** section:
-  - Starts with one row (same fields: name, price, description, image).
-  - An "add another tiebreaker item" button to add more rows, in case multiple
-    tiebreaker rounds might be needed.
-  - Explain inline: "used only if the game ends in a tie. If you run out, a small
-    placeholder prize will be improvised automatically."
-- "Finish setup" button moves to stage 3 (ready screen). Also persist all of this to
-  `localStorage` as it's entered, so navigating away and back doesn't lose data.
+- One row per round: item name, price, short description, image upload (with
+  thumbnail preview, falls back to a generic gift-box icon in-game if no image),
+  and a **"Timer (sec)"** field — the preset countdown length for that round, used
+  on the live game screen. Leave blank/0 for no timer on that round.
+- "Fill with sample items" button cycles through 8 demo items/prices for testing.
+- Separate **"Tiebreaker items"** section below, same fields (including its own
+  timer field), starts with one row, "add another tiebreaker item" to add more.
+  Falls back to an improvised "Sudden death tiebreaker" item ($200–700 random
+  price) if the queue runs out.
+- "Finish setup" → `ready`. Everything autosaves to `localStorage` on every input.
+- Has its own "Reset everything" button (separate from the global footer reset —
+  see below) since this screen doesn't show the footer control.
 
-### 3. Ready-to-play summary screen (game day starts here)
+### 3. Ready-to-play summary screen (`ready`)
 
-This is the screen the organizer should land back on when they open the page on
-game day — it should not show them the raw setup form again unless they choose to.
+Lands here on reopen once setup is done — never shows the raw setup form again
+unless the organizer chooses "Edit setup." Shows round count, team names with
+colored dots, a scoring recap, and tiebreaker item status. No prices or images
+shown (avoids spoiling the game). "Edit setup" / "Start game" buttons.
 
-- Confirms "setup complete."
-- Shows:
-  - Number of rounds loaded
-  - The three team names, each with a colored dot matching their game color
-  - A short "how it's scored" recap (see Scoring rules below, in plain language)
-  - Whether any tiebreaker items were preloaded, or if the game will improvise one if
-    needed
-- Do **not** show item images or prices on this screen — that would spoil the game
-  before it starts.
-- Two buttons: "Edit setup" (goes back to stage 2) and "Start game" (goes to stage 4).
+### 4. Live game screen (`game`)
 
-### 4. Live game screen (game day)
-
-- Header shows the Teachers FCU logo + game title, and a small badge showing
-  "round X of N" (or "tiebreaker round" during a tiebreaker).
-- Item card: shows the uploaded image (or fallback icon), item name, and
-  description. Price is hidden until "Reveal price" is clicked.
-- Three team guess cards, one per team, each in that team's color:
-  - A number input for that team's guess (dollars)
-  - After reveal: shows how far off they were and how many points they earned
-  - If a team is not eligible this round (only relevant during a tiebreaker — see
-    below), the card is visibly dimmed/disabled with a "sitting out" label.
-- "Reveal price" button: shows the actual price, scores the round (see Scoring rules),
-  shows a short banner naming whoever was closest this round, and updates the
-  scoreboard.
-- "Next round" button appears after reveal, advances to the next item. On the final
-  round, this button's label should change to either "See final results" or
-  "Break the tie" depending on whether there's a tie for the lead.
-- **Scoreboard**: always visible at the bottom of the game screen, showing every
-  team's name and running point total in their team color, updating live after every
-  round.
+- Header: logo, title, round badge ("Round X of N" or "Tiebreaker round").
+- Item card: image (bigger, `object-fit: contain` so nothing gets cropped) or
+  fallback icon, name, description, price hidden until revealed. A **round timer**
+  sits to the right of the item card (not above the team cards) — big countdown
+  display with Start timer / Pause / Resume / Reset controls. Timer preset comes
+  from the item's setup value; hitting Reset restores the full preset time. No
+  timer section shown at all if that round has no timer configured.
+- Three team guess cards, colored per team, with a guess input. During a
+  tiebreaker, ineligible teams are dimmed with a "sitting out" label and can't
+  guess.
+- **Reveal sequence** (triggered by "Reveal price"): the round timer stops,
+  background music pauses, then a **full-screen fixed overlay**
+  (`.wheel-overlay`, `position: fixed`, dark translucent backdrop, doesn't affect
+  page layout/height) appears with a spinning prize wheel — the Teachers FCU logo
+  sits statically in the wheel's center hub while the colored segments spin —
+  followed by a 3-2-1 countdown and "And the price is…" beat (synthesized ticks).
+  Only then does the price actually reveal and scoring happen.
+- On reveal: the round-winner sound effect plays, a banner names the closest
+  team(s), a small 2–3 piece confetti burst fires for the round win (every round,
+  not just the finale), and a **"Team X wins the round!" popup** pops in over a
+  dimmed full-screen backdrop (`.winner-popup`, bounce-in animation, doesn't block
+  clicks) and auto-dismisses after ~2.2s. Guess cards show each team's distance
+  and points earned, scoreboard updates. Background music resumes once this
+  popup phase ends (`state.revealPhase` goes `idle` → `suspense` → `winner` →
+  `idle`; music is paused for the whole `suspense`/`winner` window).
+- "Next round" button appears after reveal; label becomes "See final results" or
+  "Break the tie" on the final round depending on whether there's a tie.
+- Scoreboard always visible at the bottom.
 
 ### Team colors
 
-Use these three, consistently, across guess cards, scoreboard pills, and the team-dot
-in setup:
-- Team 1: red family — border/accent `#E24B4A`, pill background `#F0999A`
-- Team 2: blue family — border/accent `#378ADD`, pill background `#8FC1F0`
-- Team 3: green family — border/accent `#639922`, pill background `#A9D06B`
+- Team 1: red — border/accent `#E24B4A`, pill `#F0999A`
+- Team 2: blue — border/accent `#378ADD`, pill `#8FC1F0`
+- Team 3: green — border/accent `#639922`, pill `#A9D06B`
 
 ## Scoring rules
 
 Applied every round, including tiebreaker rounds:
 
 1. Only guesses **at or under** the actual price are eligible to place 1st or 2nd.
-2. **Closest guess under (or equal to) the price → 3 points** (the most points
-   available).
+2. **Closest guess under (or equal to) the price → 3 points.**
 3. **Second-closest eligible guess → 2 points.**
-4. **Everyone else who submitted a guess gets 1 point** — this includes teams that
-   guessed *over* the price, and any eligible guesses beyond 2nd place. Going over
-   should never score zero; it should always still earn the baseline 1 point.
-5. A team that leaves the guess blank (didn't guess at all) gets 0 points for that
-   round.
-6. **Ties**: if two or more teams tie for the closest eligible guess, all of them get
-   the full 3 points (do not split the points). The next distinct guess value down
-   gets 2 points. Do not award both 3 and 2 points to two teams that guessed the
-   identical amount — that value is worth 3 for everyone tied at it.
-7. Round order of points should always be assigned in order of distance from the
-   actual price: closest gets the most, and points step down from there, ending with
-   1 point as the floor for anyone who guessed at all.
+4. **Everyone else who submitted a guess gets 1 point** — including anyone over
+   the price. Going over never scores zero.
+5. A blank guess gets 0 points.
+6. **Ties**: teams tied for closest all get the full 3 points (not split); the
+   next distinct guess value down gets 2 points.
+7. Points step down strictly by distance from the actual price, floor of 1 for
+   anyone who guessed at all.
+
+Implemented in `doReveal()` in `app.js`.
 
 ## Tiebreaker logic
 
-- After the final scheduled round, compare total scores. If there is a single team
-  with the highest score, that team is the champion — go straight to the
-  celebration screen (stage 5 below).
-- If two or more teams are tied for the highest score, trigger a tiebreaker round:
-  - Pull the next item from the preloaded tiebreaker queue (if any are left);
-    otherwise generate a small placeholder item (e.g. "Sudden death tiebreaker,"
-    random price between $200–$700).
-  - Only the tied teams' guess cards are active; the other team(s) are shown
-    dimmed with a "sitting out" label and cannot submit a guess.
-  - Score the round using the same rules above (still only ranking within the
-    eligible tied teams).
-  - If after this round the tied teams are still tied, repeat with another
-    tiebreaker item. Keep going until there's a single leader among the
-    originally-tied teams.
-  - Once resolved, that team is the champion.
+- After the final round, if one team has the outright highest score, they're
+  champion — straight to the celebration screen.
+- If tied, trigger a tiebreaker round: pull from the tiebreaker queue (or
+  improvise a placeholder), only tied teams' cards are active, score with the
+  same rules (ranked only among eligible teams). Repeat with additional
+  tiebreaker items until a single leader emerges among the originally-tied teams.
 
-## Champion celebration screen (stage 5)
+Implemented in `advanceRound()` / `pullTiebreakerItem()` in `app.js`.
 
-When a single champion is determined:
+## Champion celebration screen (`celebration`)
 
-- Replace the round content (item card, guess inputs, reveal button) with a
-  dedicated celebration view — don't just show a small banner.
-- Center the winning team's name prominently (large, bold, in white or gold against
-  the navy/blue background), with a trophy icon above it and their final point total
-  below.
-- Add a lightweight celebratory animation: falling confetti pieces in the brand
-  colors (gold, white, and the three team colors) and a couple of firework-style
-  bursts. Keep this to simple CSS keyframe animations (`translateY`/rotation for
-  confetti, radiating small dots for fireworks) — no external animation libraries
-  needed.
-- The scoreboard should remain visible below the celebration, showing final standings
-  for all three teams.
-- Optionally add a "play again" button that resets scores and returns to the
-  ready-to-play screen (keeping the same preloaded items so the organizer doesn't
-  have to redo setup for a rematch) — nice-to-have, not required.
+- Full celebration view replaces round content: trophy icon, winning team name
+  large/bold in gold, final point total, falling confetti + firework-style bursts
+  in brand + team colors (CSS keyframes only), scoreboard still visible below.
+- The game-winner sound effect plays alone (background music paused) when the
+  champion is decided; once that sound finishes, background music resumes and
+  keeps playing through the rest of the celebration screen (see "Background
+  music & sound effects" below for how that handoff is wired).
+- "Play again" button resets all scores and returns to the `ready` screen,
+  keeping the same preloaded items (no need to redo setup for a rematch).
 
-## Data model (suggested shape)
+## Global "Reset entire game" control
+
+A footer with a "Reset game" button appears on every stage **except** `setup2`
+(which has its own inline reset). Confirms before clearing `localStorage`
+entirely and returning to a blank `setup1`. This is the way to fully start over
+at any point, including mid-game on game day.
+
+## Background music & sound effects
+
+Audio files live under `assets/audio/`:
+- `background-music.mp3` — loops continuously during the live game screen.
+- `dingding.mp3` — plays once when a round's winner popup appears.
+- `winner-sound.mp3` — plays once when the overall game champion is decided.
+
+**Only use audio the organizer has confirmed rights to use** — do not add or
+swap in copyrighted commercial tracks (e.g. game-show theme songs) without an
+explicit, verifiable royalty-free license, since this repo and its GitHub Pages
+site are both public. This came up directly during development: a request to
+use the actual "Price Is Right" theme was declined for this reason.
+
+To swap the background track, replace the file at
+`assets/audio/background-music.mp3` in place (same filename/path) with a new
+`.mp3` — no code changes needed. To swap either win sound, same idea at
+`assets/audio/dingding.mp3` / `assets/audio/winner-sound.mp3`.
+
+Playback wiring in `app.js`:
+- `bgMusicEl` (`Audio`, `loop = true`) is started/stopped by `render()` itself:
+  music plays whenever `state.stage === 'game'` **and** `state.revealPhase` is
+  not `'suspense'` or `'winner'` — otherwise it's paused. This means every
+  stage transition automatically gets the right music state for free; don't
+  reintroduce a manual `stopMusic()`/`startMusic()` call elsewhere without
+  checking this logic first, it's easy to fight it.
+- `roundWinnerSoundEl` plays via `playRoundWinnerSound()`, called from
+  `doReveal()`.
+- `gameWinnerSoundEl` plays via `playGameWinnerSound()`, called from
+  `advanceRound()` (both the "clean winner after final round" and
+  "tiebreaker resolved" branches). Its `ended` listener explicitly calls
+  `startMusic()` if `state.stage === 'celebration'` — this is what resumes
+  background music after the champion sound finishes, bypassing the normal
+  `render()`-driven stage check (celebration isn't `'game'`, so that check
+  alone would never restart it).
+- **Known gotcha already hit once**: the `setTimeout` in `doReveal()` that
+  resets `revealPhase` from `'winner'` back to `'idle'` after ~2.2s must also
+  check `state.stage === 'game'` before calling `setState()`. Without that
+  guard, if the organizer advances to the next round/celebration quickly, that
+  stray timer fires after the stage has already changed, triggers an
+  unnecessary `render()`, and re-pauses the just-resumed celebration music.
+  Keep that guard if touching this code.
+- `setMuted()` mutes/unmutes `bgMusicEl` directly and is also checked at the
+  top of `playTone()` (the synthesized tick) — the mute button controls both.
+- The countdown ticks during the reveal suspense are still synthesized via
+  `playTone()`/`playTick()`/`getAudioContext()` (Web Audio API), not files.
+  `getAudioContext()` is called synchronously inside click handlers (not inside
+  `setTimeout` callbacks) to keep the AudioContext unlocked under browser
+  autoplay policies.
+
+### Mute control
+
+A persistent 🔊/🔇 button (`.mute-btn`, fixed bottom-left) is attached once
+directly to `document.body` (not re-rendered with `#app`), so it survives every
+stage transition without needing to be re-created. Toggles `state.muted`,
+which is checked by both the file-based music/sound-effect code and the
+synthesized tick.
+
+## Data model
+
+Persisted config shape (subset of the full runtime `state` object — see
+`defaultState()` in `app.js` for the complete shape, which also includes runtime
+fields like `currentRoundIndex`, `guesses`, `revealed`, `revealPhase`,
+`timerSecondsLeft`, `timerRunning`, `lastRoundPoints`, etc.):
 
 ```js
 {
   teams: [
-    { name: "Team 1", color: "#E24B4A", score: 0 },
-    { name: "Team 2", color: "#378ADD", score: 0 },
-    { name: "Team 3", color: "#639922", score: 0 }
+    { name: "Team 1", color: "#E24B4A", pill: "#F0999A", score: 0 },
+    { name: "Team 2", color: "#378ADD", pill: "#8FC1F0", score: 0 },
+    { name: "Team 3", color: "#639922", pill: "#A9D06B", score: 0 }
   ],
   rounds: [
-    { name: "...", description: "...", price: 649, image: "data:image/..." }
+    { name: "...", description: "...", price: 649, image: "data:image/...", timeLimit: 60 }
   ],
   tiebreakerQueue: [
-    { name: "...", description: "...", price: 250, image: "data:image/..." }
+    { name: "...", description: "...", price: 250, image: "data:image/...", timeLimit: 45 }
   ],
-  currentRoundIndex: 0,
   isTiebreaker: false,
   tiebreakerEligibleTeamIndices: []
 }
@@ -207,45 +247,56 @@ When a single champion is determined:
 
 ## Local development
 
-- No build step is strictly required if built as plain HTML/CSS/JS — just open
-  `index.html` in a browser, or better, run a simple local server so `FileReader` and
-  relative asset paths behave consistently:
-  ```
-  npx serve .
-  ```
-  or
-  ```
-  python3 -m http.server 8000
-  ```
-  then visit `http://localhost:8000`.
-- If built with Vite/React instead:
-  ```
-  npm install
-  npm run dev
-  ```
+```
+cd "Q2 All Hands-Price is right"
+python3 -m http.server 8123
+```
+then visit `http://localhost:8123`. (Or `npx serve .`.) A local server is needed
+so `FileReader` and relative asset paths behave consistently — opening
+`index.html` directly can work but isn't reliable for the image upload flow.
 
-## Deploying to GitHub Pages (so it's ready for game day)
+## Deploying to GitHub Pages
 
-1. Push this project to a GitHub repository.
-2. If it's plain HTML/CSS/JS with no build step:
-   - Go to the repo's **Settings → Pages**.
-   - Under "Build and deployment," set **Source** to "Deploy from a branch," branch
-     `main`, folder `/ (root)`.
-   - Save. The site will publish at `https://<username>.github.io/<repo-name>/`.
-3. If built with Vite/React (needs a build step):
-   - Set the `base` in `vite.config.js` to `/<repo-name>/`.
-   - Run `npm run build` to produce a `dist/` folder.
-   - Either commit `dist/` to a `gh-pages` branch and point Pages at that branch, or
-     set up a small GitHub Actions workflow that builds and deploys on push to `main`
-     (ask Claude Code to scaffold this if you go the React route).
-4. On game day, just open the published GitHub Pages URL — the "ready to play"
-   summary screen (with everything preloaded, assuming you used the same browser/
-   device where setup was saved to `localStorage`) is where you'll land.
+Already set up — this section documents the actual configuration in place:
 
-## Nice-to-haves (only if time allows)
+1. Repo `dylandgz/Teachers-Price-Is-Right`, remote via SSH
+   (`git@github.com:dylandgz/Teachers-Price-Is-Right.git`).
+2. `.github/workflows/deploy.yml` runs on every push to `main`: checks out,
+   `actions/configure-pages`, `actions/upload-pages-artifact` (uploads the repo
+   root as-is, no build step), `actions/deploy-pages`.
+3. Repo **Settings → Pages → Source** is set to **"GitHub Actions"** (not
+   "Deploy from a branch") — this must stay set that way for the workflow to
+   actually publish.
+4. Live URL: `https://dylandgz.github.io/Teachers-Price-Is-Right/`. Pushing to
+   `main` is the entire deploy step — no manual Pages steps needed after that.
+5. GitHub Pages/Fastly CDN caches responses for ~10 minutes
+   (`cache-control: max-age=600`) — if a deploy doesn't visibly show up right
+   away, hard-refresh (Cmd+Shift+R) or use a private window before assuming the
+   deploy failed; check the Actions tab for the actual run status.
 
-- A subtle sound effect on price reveal and on the champion celebration.
-- A "reset everything" button in setup for starting completely fresh.
-- Print or export a simple end-of-game results summary (team names + final scores).
-- Support for more than 3 teams (not required now, but keep the data model loosely
-  structured enough that this wouldn't be a full rewrite later).
+## Nice-to-haves status
+
+- ✅ Sound effects on reveal and champion celebration — done (see "Background
+  music & sound effects" above).
+- ✅ "Reset everything" — done, both inline on the item-setup screen and as a
+  global footer control on every other screen.
+- ⬜ Print/export a simple end-of-game results summary — not built.
+- ⬜ Support for more than 3 teams — not built; data model is loosely structured
+  enough that this wouldn't be a full rewrite, but the UI (guess grid, team
+  setup, colors) currently assumes exactly 3.
+
+## Extras built beyond the original spec
+
+These came from game-day feedback during development, not the original brief —
+keep them in mind as the current expected behavior, not optional add-ons:
+
+- Prize wheel + drumroll suspense sequence before every price reveal (full-screen
+  overlay, doesn't shift page layout).
+- Per-round countdown timer, preset in setup, run live with Start/Pause/Resume/
+  Reset next to the item card.
+- Small confetti burst on every round win, not just the finale, plus a "Team X
+  wins the round!" popup.
+- Looping background music during live play, with real win-sound effects on
+  round wins and the game championship, and a persistent bottom-left mute
+  button controlling all of it.
+- Global "Reset game" footer control for a full restart at any point.
