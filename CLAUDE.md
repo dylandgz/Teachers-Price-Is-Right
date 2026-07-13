@@ -166,9 +166,14 @@ at any point, including mid-game on game day.
 ## Background music & sound effects
 
 Audio files live under `assets/audio/`:
-- `background-music.mp3` — loops continuously during the live game screen.
-- `dingding.mp3` — plays once when a round's winner popup appears.
-- `winner-sound.mp3` — plays once when the overall game champion is decided.
+- `background-music.mp3` — loops continuously during the live game screen and
+  showcase play (paused during reveals, resumed after — see wiring below).
+- `dingding.mp3` — plays once when a regular round's winner popup appears.
+- `winner-sound.mp3` — plays once when the overall game champion is decided,
+  and once when the showcase round's single overall winner is decided (not on
+  each team's individual reveal — see the showcase round section above).
+- `failure_sound.mp3` — plays once when a team busts in the showcase round
+  (guesses over their showcase total, or doesn't guess at all).
 
 **Only use audio the organizer has confirmed rights to use** — do not add or
 swap in copyrighted commercial tracks (e.g. game-show theme songs) without an
@@ -176,10 +181,8 @@ explicit, verifiable royalty-free license, since this repo and its GitHub Pages
 site are both public. This came up directly during development: a request to
 use the actual "Price Is Right" theme was declined for this reason.
 
-To swap the background track, replace the file at
-`assets/audio/background-music.mp3` in place (same filename/path) with a new
-`.mp3` — no code changes needed. To swap either win sound, same idea at
-`assets/audio/dingding.mp3` / `assets/audio/winner-sound.mp3`.
+To swap any of these, replace the file in place (same filename/path) with a
+new `.mp3` — no code changes needed.
 
 Playback wiring in `app.js`:
 - `bgMusicEl` (`Audio`, `loop = true`) is started/stopped by `render()` itself:
@@ -300,3 +303,95 @@ keep them in mind as the current expected behavior, not optional add-ons:
   round wins and the game championship, and a persistent bottom-left mute
   button controlling all of it.
 - Global "Reset game" footer control for a full restart at any point.
+
+
+
+## Showcase round (optional, after all regular rounds)
+
+A distinct final stage modeled on the real show's Showcase Showdown format —
+**exactly two showcases, two teams, one overall winner.** This went through a
+full redesign during development (an earlier version let 1–3 teams each build
+their own showcase and win independently) — the current behavior below is what's
+actually implemented; don't reintroduce the old per-team-independent-win model.
+
+### Setup is pre-game only (`showcaseSetup` stage)
+
+- Reached from the **`ready` screen** (before "Start game"), via "Set up
+  showcase round" / "Edit showcase items". This is deliberately pre-game — the
+  organizer builds the two showcases before the first round even starts, so
+  there's no pause to build content later, mid-flow, on game day.
+- Builds **exactly two showcases** (Showcase 1, Showcase 2) — generic prize
+  packages, not tied to any team yet. Each has a 2–5 item-count dropdown and
+  that many name/price/image rows (`state.showcase.items[0]` / `items[1]`,
+  `itemCounts[0]` / `[1]`).
+- If items were never configured by the time the organizer reaches the
+  celebration screen, "Start showcase round" there falls back to this same
+  setup stage as a live-setup path (`showcaseHasAnyItems()` checks this) — but
+  the intended, recommended flow is doing it ahead of time from `ready`.
+- `state.showcaseSetupOrigin` (`'ready'` or `'celebration'`) tracks which entry
+  point was used, so "Back"/"Finish setup" return to the right place (back to
+  `ready` pre-game, or on to team selection post-game).
+
+### Team selection happens after the regular rounds (`showcaseChooseTeams` stage)
+
+- Reached from the **celebration screen** via "Start showcase round" (only
+  after items are already configured — see above). Checkboxes for all 3 teams,
+  **hard-capped at exactly 2** — trying to check a third shows an alert and the
+  checkbox stays unchecked. This is a deliberate, manual, real-time choice made
+  after seeing how the regular rounds played out, not decided in advance.
+- The first team checked plays Showcase 1, the second plays Showcase 2
+  (`state.showcase.teamIndices[0]` / `[1]`). Team selection always starts fresh
+  each time this stage is entered from celebration (`teamIndices` reset to
+  `[]`) — it is not remembered from a previous playthrough.
+
+### Showcase ready screen (`showcaseReady`)
+
+Shows "Showcase 1: Team X — N items", "Showcase 2: Team Y — N items" (counts
+only, no prices/items — avoids spoilers). "Change teams" goes back to team
+selection; "Start showcase round" begins play.
+
+### Showcase play (`showcasePlay`, slot-indexed by `state.showcase.currentPos`)
+
+- Teams play **one at a time**, Showcase 1's team first, then Showcase 2's.
+- Item grid (photo + name, no prices) for the current slot's showcase, a
+  single guess input for the combined total.
+- **Individual reveal does not declare a winner.** Guessing at/under the total
+  just shows a neutral "guessed $X, $Y under — we'll see how that stacks up
+  once both showcases are revealed" — because the other team hasn't gone yet
+  and could end up closer. Going over the total **is** an immediate, final
+  outcome regardless of the other team ("went over — busted"), since busting
+  doesn't depend on anyone else's result — the failure sound plays right away
+  for that case. `state.showcase.busted[slot]` tracks this; there is
+  deliberately no `won` field per-slot anymore, only a single overall
+  `state.showcase.winnerSlot` computed once both teams have played (see below).
+
+### Determining the single overall winner
+
+Computed once in `advanceShowcase()` when moving from the second team's reveal
+to the results screen (`computeShowcaseWinner()` in `app.js`):
+- Both busted → no winner (`null`).
+- Exactly one busted → the other team wins automatically.
+- Neither busted → whoever guessed **closer without going over** wins
+  (smaller `total - guess`); an exact tie in closeness is reported as `'tie'`.
+
+The game-winner sound plays exactly once, at this moment (results screen),
+never during an individual team's reveal — that was a real bug found during
+development (both teams showing "Won" independently) and is the reason the
+per-slot `won` field was replaced with a single `winnerSlot`.
+
+### Showcase results (`showcaseResults`)
+
+- Full celebration (confetti/fireworks, reused from the champion screen)
+  **only if there's a winner** (including the tie case). Lists both teams'
+  guess, actual total, and status (`🏆 Won` / `Did not win` / `Busted`).
+- **If there's no winner** (both busted): a **"Try again with a different
+  combination"** button appears. It pools both showcases' items together,
+  shuffles them (Fisher-Yates), and re-splits into two new showcases —
+  preserving each showcase's original item count, so the same organizer-built
+  items get recombined into new price totals without any new data entry — then
+  replays immediately with the *same two teams* (`reshuffleShowcaseItems()` in
+  `app.js`).
+- "Play again" (full game reset) is always available too, and resets scores
+  and showcase play-state back to the `ready` screen — but showcase **item**
+  setup persists across a rematch (like regular-round items do), so it doesn't
+  need to be rebuilt; only team selection and guesses reset.

@@ -19,6 +19,19 @@ const SAMPLE_ITEMS = [
   { name: 'Patio furniture set', price: 899, description: 'Turn the backyard into a hangout spot.' }
 ];
 
+function defaultShowcaseState() {
+  return {
+    teamIndices: [],
+    itemCounts: [3, 3],
+    items: [[], []],
+    currentPos: 0,
+    guesses: {},
+    revealed: {},
+    busted: {},
+    winnerSlot: null
+  };
+}
+
 function defaultState() {
   return {
     stage: 'setup1',
@@ -39,7 +52,9 @@ function defaultState() {
     lastRoundClosestIndices: [],
     timerSecondsLeft: null,
     timerRunning: false,
-    muted: false
+    muted: false,
+    showcase: defaultShowcaseState(),
+    showcaseSetupOrigin: 'celebration'
   };
 }
 
@@ -125,9 +140,11 @@ function playTick() {
 
 const ROUND_WINNER_SOUND_SRC = 'assets/audio/dingding.mp3';
 const GAME_WINNER_SOUND_SRC = 'assets/audio/winner-sound.mp3';
+const FAILURE_SOUND_SRC = 'assets/audio/failure_sound.mp3';
 
 let roundWinnerSoundEl = null;
 let gameWinnerSoundEl = null;
+let failureSoundEl = null;
 
 function playRoundWinnerSound() {
   if (state.muted) return;
@@ -145,11 +162,24 @@ function playGameWinnerSound() {
     gameWinnerSoundEl = new Audio(GAME_WINNER_SOUND_SRC);
     gameWinnerSoundEl.volume = 0.7;
     gameWinnerSoundEl.addEventListener('ended', () => {
-      if (state.stage === 'celebration') startMusic();
+      if (state.stage === 'celebration' || state.stage === 'showcasePlay' || state.stage === 'showcaseResults') startMusic();
     });
   }
   gameWinnerSoundEl.currentTime = 0;
   gameWinnerSoundEl.play().catch(() => {});
+}
+
+function playFailureSound() {
+  if (state.muted) return;
+  if (!failureSoundEl) {
+    failureSoundEl = new Audio(FAILURE_SOUND_SRC);
+    failureSoundEl.volume = 0.6;
+    failureSoundEl.addEventListener('ended', () => {
+      if (state.stage === 'showcasePlay') startMusic();
+    });
+  }
+  failureSoundEl.currentTime = 0;
+  failureSoundEl.play().catch(() => {});
 }
 
 /* ---------------- Background music (local audio file) ---------------- */
@@ -258,8 +288,14 @@ function render() {
     case 'ready': app.innerHTML = renderReady(); bindReady(); break;
     case 'game': app.innerHTML = renderGame(); bindGame(); break;
     case 'celebration': app.innerHTML = renderCelebration(); bindCelebration(); break;
+    case 'showcaseSetup': app.innerHTML = renderShowcaseSetup(); bindShowcaseSetup(); break;
+    case 'showcaseChooseTeams': app.innerHTML = renderShowcaseChooseTeams(); bindShowcaseChooseTeams(); break;
+    case 'showcaseReady': app.innerHTML = renderShowcaseReady(); bindShowcaseReady(); break;
+    case 'showcasePlay': app.innerHTML = renderShowcasePlay(); bindShowcasePlay(); break;
+    case 'showcaseResults': app.innerHTML = renderShowcaseResults(); bindShowcaseResults(); break;
   }
-  const musicShouldPlay = state.stage === 'game' && state.revealPhase !== 'suspense' && state.revealPhase !== 'winner';
+  const musicShouldPlay = (state.stage === 'game' && state.revealPhase !== 'suspense' && state.revealPhase !== 'winner')
+    || (state.stage === 'showcasePlay' && !state.showcase.revealed[state.showcase.currentPos]);
   if (musicShouldPlay) {
     startMusic();
   } else {
@@ -535,8 +571,15 @@ function renderReady() {
           : `No tiebreaker items preloaded — a placeholder prize will be improvised automatically if needed.`}
       </p>
 
+      <p class="hint">
+        ${showcaseHasAnyItems()
+          ? `Showcase round items are ready — after the regular rounds, you'll pick which two teams play them.`
+          : `Showcase round not set up yet (optional) — you can add it now, or later from the champion screen.`}
+      </p>
+
       <div class="btn-row">
         <button class="btn btn-secondary" id="edit-setup">Edit setup</button>
+        <button class="btn btn-secondary" id="setup-showcase-btn">${showcaseHasAnyItems() ? 'Edit showcase items' : 'Set up showcase round'}</button>
         <button class="btn btn-primary" id="start-game">Start game</button>
       </div>
     </div>
@@ -546,6 +589,10 @@ function renderReady() {
 function bindReady() {
   document.getElementById('edit-setup').addEventListener('click', () => {
     setState({ stage: 'setup2' });
+  });
+  document.getElementById('setup-showcase-btn').addEventListener('click', () => {
+    state.showcaseSetupOrigin = 'ready';
+    setState({ stage: 'showcaseSetup' });
   });
   document.getElementById('start-game').addEventListener('click', () => {
     state.stage = 'game';
@@ -1016,15 +1063,502 @@ function renderCelebration() {
     </div>
 
     <div class="btn-row">
+      <button class="btn btn-secondary" id="start-showcase-btn">Start showcase round</button>
       <button class="btn btn-primary" id="play-again">Play again</button>
     </div>
   `;
 }
 
 function bindCelebration() {
+  document.getElementById('start-showcase-btn').addEventListener('click', () => {
+    if (showcaseHasAnyItems()) {
+      state.showcase.teamIndices = [];
+      setState({ stage: 'showcaseChooseTeams' });
+    } else {
+      state.showcaseSetupOrigin = 'celebration';
+      setState({ stage: 'showcaseSetup' });
+    }
+  });
   document.getElementById('play-again').addEventListener('click', () => {
     clearRoundTimer();
     state.teams.forEach(t => { t.score = 0; });
+    state.showcase.currentPos = 0;
+    state.showcase.guesses = {};
+    state.showcase.revealed = {};
+    state.showcase.busted = {};
+    state.showcase.winnerSlot = null;
+    setState({
+      stage: 'ready',
+      currentRoundIndex: 0,
+      isTiebreaker: false,
+      tiebreakerEligibleTeamIndices: [],
+      tiebreakerQueueIndex: 0,
+      activeTiebreakerItem: null,
+      guesses: [null, null, null],
+      revealed: false,
+      revealPhase: 'idle',
+      lastRoundPoints: [null, null, null],
+      lastRoundDiff: [null, null, null],
+      lastRoundClosestIndices: [],
+      timerSecondsLeft: null,
+      timerRunning: false
+    });
+  });
+}
+
+/* ---- Showcase round: build the two showcases (pre-game) ---- */
+
+function ensureShowcaseItemRows(slot) {
+  const count = state.showcase.itemCounts[slot] || 3;
+  const existing = state.showcase.items[slot] || [];
+  const rows = existing.slice(0, count);
+  while (rows.length < count) rows.push({ name: '', price: '', image: null });
+  state.showcase.items[slot] = rows;
+  state.showcase.itemCounts[slot] = count;
+}
+
+function showcaseHasAnyItems() {
+  return [0, 1].some(slot => (state.showcase.items[slot] || []).some(it => it.name));
+}
+
+function renderShowcaseItemRow(slot, item, idx) {
+  const thumb = item.image
+    ? `<img class="thumb-preview" src="${item.image}" alt="preview" />`
+    : `<div class="thumb-placeholder">${fallbackIconSvg(28)}</div>`;
+  return `
+    <div class="item-row showcase-item-row">
+      <div class="row-label">Item ${idx + 1}</div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Item name</label>
+        <input type="text" data-role="scname" data-slot="${slot}" data-idx="${idx}" value="${escapeHtml(item.name)}" placeholder="e.g. Living room set" />
+      </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Price ($)</label>
+        <input type="number" min="0" data-role="scprice" data-slot="${slot}" data-idx="${idx}" value="${item.price === '' || item.price === null || item.price === undefined ? '' : item.price}" placeholder="0" />
+      </div>
+      <div class="thumb-wrap">
+        <label>Image</label>
+        ${thumb}
+        <input type="file" accept="image/*" data-role="scimage" data-slot="${slot}" data-idx="${idx}" />
+      </div>
+    </div>
+  `;
+}
+
+function renderShowcaseSetup() {
+  ensureShowcaseItemRows(0);
+  ensureShowcaseItemRows(1);
+  return `
+    ${headerHtml()}
+    <div class="card">
+      <h2>Showcase round setup</h2>
+      <p class="hint">Build two showcases now. After the regular rounds finish, you'll pick which two teams play them — you don't need to know that yet.</p>
+    </div>
+    ${[0, 1].map(slot => `
+      <div class="card">
+        <h2>Showcase ${slot + 1}</h2>
+        <div class="field" style="max-width:220px;">
+          <label>Number of items</label>
+          <select data-slot="${slot}" class="showcase-count-select">
+            ${[2, 3, 4, 5].map(n => `<option value="${n}" ${state.showcase.itemCounts[slot] === n ? 'selected' : ''}>${n} items</option>`).join('')}
+          </select>
+        </div>
+        ${state.showcase.items[slot].map((item, i) => renderShowcaseItemRow(slot, item, i)).join('')}
+      </div>
+    `).join('')}
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="cancel-showcase-setup">Back</button>
+      <button class="btn btn-primary" id="finish-showcase-setup">Finish showcase setup</button>
+    </div>
+  `;
+}
+
+function bindShowcaseSetup() {
+  document.querySelectorAll('.showcase-count-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const slot = parseInt(sel.dataset.slot, 10);
+      state.showcase.itemCounts[slot] = parseInt(sel.value, 10);
+      ensureShowcaseItemRows(slot);
+      save();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-role="scname"], [data-role="scprice"]').forEach(input => {
+    input.addEventListener('input', () => {
+      const slot = parseInt(input.dataset.slot, 10);
+      const idx = parseInt(input.dataset.idx, 10);
+      if (input.dataset.role === 'scprice') {
+        state.showcase.items[slot][idx].price = input.value === '' ? '' : Number(input.value);
+      } else {
+        state.showcase.items[slot][idx].name = input.value;
+      }
+      save();
+    });
+  });
+
+  document.querySelectorAll('[data-role="scimage"]').forEach(input => {
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const dataUrl = await fileToDataUrl(file);
+      const slot = parseInt(input.dataset.slot, 10);
+      const idx = parseInt(input.dataset.idx, 10);
+      state.showcase.items[slot][idx].image = dataUrl;
+      save();
+      render();
+    });
+  });
+
+  document.getElementById('cancel-showcase-setup').addEventListener('click', () => {
+    setState({ stage: state.showcaseSetupOrigin === 'ready' ? 'ready' : 'celebration' });
+  });
+
+  document.getElementById('finish-showcase-setup').addEventListener('click', () => {
+    setState({ stage: state.showcaseSetupOrigin === 'ready' ? 'ready' : 'showcaseChooseTeams' });
+  });
+}
+
+/* ---- Showcase round: choose two teams (after the regular rounds) ---- */
+
+function renderShowcaseChooseTeams() {
+  return `
+    ${headerHtml()}
+    <div class="card">
+      <h2>Showcase round — choose two teams</h2>
+      <p class="hint">Pick exactly two teams to play the showcase. The first team you pick plays Showcase 1, the second plays Showcase 2.</p>
+      <div class="showcase-team-picker">
+        ${state.teams.map((t, i) => `
+          <label class="showcase-team-option" style="border-color:${t.color};">
+            <input type="checkbox" data-idx="${i}" ${state.showcase.teamIndices.includes(i) ? 'checked' : ''} />
+            <span class="dot" style="background:${t.color};"></span>
+            ${escapeHtml(t.name)}
+          </label>
+        `).join('')}
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" id="back-to-celebration">Back</button>
+        <button class="btn btn-primary" id="choose-teams-continue">Continue</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindShowcaseChooseTeams() {
+  document.querySelectorAll('.showcase-team-option input[type="checkbox"]').forEach(input => {
+    input.addEventListener('change', () => {
+      const idx = parseInt(input.dataset.idx, 10);
+      if (input.checked && state.showcase.teamIndices.length >= 2 && !state.showcase.teamIndices.includes(idx)) {
+        input.checked = false;
+        alert('Only two teams can play the showcase — uncheck one first.');
+        return;
+      }
+      const list = state.showcase.teamIndices.slice();
+      if (input.checked) {
+        list.push(idx);
+      } else {
+        const pos = list.indexOf(idx);
+        if (pos !== -1) list.splice(pos, 1);
+      }
+      state.showcase.teamIndices = list;
+      save();
+    });
+  });
+
+  document.getElementById('back-to-celebration').addEventListener('click', () => {
+    setState({ stage: 'celebration' });
+  });
+
+  document.getElementById('choose-teams-continue').addEventListener('click', () => {
+    if (state.showcase.teamIndices.length !== 2) {
+      alert('Select exactly two teams to continue.');
+      return;
+    }
+    setState({ stage: 'showcaseReady' });
+  });
+}
+
+/* ---- Showcase round: ready screen ---- */
+
+function renderShowcaseReady() {
+  return `
+    ${headerHtml()}
+    <div class="card">
+      <h2>Showcase round ready</h2>
+      <p class="hint">Here's who's playing which showcase. No prices or items are shown here to avoid spoiling it.</p>
+      <div class="team-list">
+        ${[0, 1].map(slot => {
+          const teamIdx = state.showcase.teamIndices[slot];
+          const t = state.teams[teamIdx];
+          const count = state.showcase.itemCounts[slot] || 0;
+          return `
+            <div class="team-row">
+              <span class="dot" style="background:${t.color};"></span>
+              <span>Showcase ${slot + 1}: <strong>${escapeHtml(t.name)}</strong> — ${count} item${count === 1 ? '' : 's'} loaded</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-secondary" id="edit-showcase-teams">Change teams</button>
+        <button class="btn btn-primary" id="start-showcase-play">Start showcase round</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindShowcaseReady() {
+  document.getElementById('edit-showcase-teams').addEventListener('click', () => {
+    setState({ stage: 'showcaseChooseTeams' });
+  });
+  document.getElementById('start-showcase-play').addEventListener('click', () => {
+    state.showcase.currentPos = 0;
+    state.showcase.guesses = {};
+    state.showcase.revealed = {};
+    state.showcase.busted = {};
+    state.showcase.winnerSlot = null;
+    setState({ stage: 'showcasePlay' });
+  });
+}
+
+/* ---- Showcase round: play ---- */
+
+function renderShowcasePlay() {
+  const slot = state.showcase.currentPos;
+  const teamIdx = state.showcase.teamIndices[slot];
+  const t = state.teams[teamIdx];
+  const items = state.showcase.items[slot] || [];
+  const total = items.reduce((sum, it) => sum + (Number(it.price) || 0), 0);
+  const revealed = !!state.showcase.revealed[slot];
+  const guessVal = state.showcase.guesses[slot];
+  const badge = `Showcase ${slot + 1} of 2`;
+
+  const itemsGrid = items.map(it => {
+    const img = it.image
+      ? `<img class="showcase-item-image" src="${it.image}" alt="${escapeHtml(it.name)}" />`
+      : `<div class="showcase-item-fallback">${fallbackIconSvg(36)}</div>`;
+    return `
+      <div class="showcase-item-tile">
+        ${img}
+        <div class="showcase-item-name">${escapeHtml(it.name) || 'Mystery item'}</div>
+      </div>
+    `;
+  }).join('');
+
+  let resultHtml = '';
+  if (revealed) {
+    const busted = state.showcase.busted[slot];
+    const guessNum = Number(guessVal) || 0;
+    const under = total - guessNum;
+    resultHtml = `
+      <div class="reveal-banner ${busted ? 'reveal-banner-bust' : ''}">
+        ${busted
+          ? `${escapeHtml(t.name)} went over — busted.`
+          : `${escapeHtml(t.name)} guessed ${money(guessNum)}, ${money(under)} under. We'll see how that stacks up once both showcases are revealed.`}
+      </div>
+      <div class="price-display">Total: ${money(total)}</div>
+    `;
+  }
+
+  const isLast = slot >= 1;
+  const nextLabel = isLast ? 'See showcase results' : 'Next showcase';
+
+  return `
+    ${headerHtml(badge)}
+    <div class="card">
+      <h2 style="color:${t.color};">${escapeHtml(t.name)}'s showcase</h2>
+      <div class="showcase-item-grid">${itemsGrid}</div>
+    </div>
+
+    <div class="card">
+      ${!revealed ? `
+        <label for="showcase-guess">Guess the total price ($)</label>
+        <input type="number" min="0" id="showcase-guess" value="${guessVal === null || guessVal === undefined ? '' : guessVal}" placeholder="Enter total guess" style="max-width:260px;" />
+      ` : resultHtml}
+    </div>
+
+    <div class="card">
+      <div class="btn-row" style="margin-top:0;">
+        ${!revealed
+          ? `<button class="btn btn-primary" id="reveal-showcase-btn">Reveal showcase price</button>`
+          : `<button class="btn btn-primary" id="next-showcase-btn">${nextLabel}</button>`}
+      </div>
+    </div>
+  `;
+}
+
+function bindShowcasePlay() {
+  const slot = state.showcase.currentPos;
+  const revealed = !!state.showcase.revealed[slot];
+  if (!revealed) {
+    const input = document.getElementById('showcase-guess');
+    if (input) {
+      input.addEventListener('input', () => {
+        state.showcase.guesses[slot] = input.value === '' ? null : Number(input.value);
+        save();
+      });
+    }
+    const revealBtn = document.getElementById('reveal-showcase-btn');
+    if (revealBtn) revealBtn.addEventListener('click', doRevealShowcase);
+  } else {
+    const nextBtn = document.getElementById('next-showcase-btn');
+    if (nextBtn) nextBtn.addEventListener('click', advanceShowcase);
+  }
+}
+
+function doRevealShowcase() {
+  const slot = state.showcase.currentPos;
+  const items = state.showcase.items[slot] || [];
+  const total = items.reduce((sum, it) => sum + (Number(it.price) || 0), 0);
+  const guess = state.showcase.guesses[slot];
+  const busted = guess === null || guess === undefined || guess === '' || Number(guess) > total;
+  state.showcase.revealed[slot] = true;
+  state.showcase.busted[slot] = busted;
+  if (busted) playFailureSound();
+  setState({});
+}
+
+function showcaseSlotDiff(slot) {
+  const items = state.showcase.items[slot] || [];
+  const total = items.reduce((sum, it) => sum + (Number(it.price) || 0), 0);
+  const guess = Number(state.showcase.guesses[slot]) || 0;
+  return total - guess;
+}
+
+function computeShowcaseWinner() {
+  const eligible = [0, 1].filter(slot => !state.showcase.busted[slot]);
+  if (eligible.length === 0) return null;
+  if (eligible.length === 1) return eligible[0];
+  const d0 = showcaseSlotDiff(0);
+  const d1 = showcaseSlotDiff(1);
+  if (d0 < d1) return 0;
+  if (d1 < d0) return 1;
+  return 'tie';
+}
+
+function advanceShowcase() {
+  if (state.showcase.currentPos >= 1) {
+    const winnerSlot = computeShowcaseWinner();
+    state.showcase.winnerSlot = winnerSlot;
+    if (winnerSlot === 0 || winnerSlot === 1 || winnerSlot === 'tie') playGameWinnerSound();
+    setState({ stage: 'showcaseResults' });
+  } else {
+    state.showcase.currentPos += 1;
+    setState({});
+  }
+}
+
+/* ---- Showcase round: results ---- */
+
+function reshuffleShowcaseItems() {
+  const pool = [...state.showcase.items[0], ...state.showcase.items[1]];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  const count0 = state.showcase.itemCounts[0];
+  state.showcase.items[0] = pool.slice(0, count0);
+  state.showcase.items[1] = pool.slice(count0);
+}
+
+function renderShowcaseResults() {
+  const winnerSlot = state.showcase.winnerSlot;
+  const hasWinner = winnerSlot === 0 || winnerSlot === 1 || winnerSlot === 'tie';
+
+  const confettiColors = ['#F7A600', '#FFFFFF', '#E24B4A', '#378ADD', '#639922'];
+  let confettiHtml = '';
+  let fireworksHtml = '';
+  if (hasWinner) {
+    for (let i = 0; i < 50; i++) {
+      const left = Math.random() * 100;
+      const delay = Math.random() * 3;
+      const duration = 2.5 + Math.random() * 2.5;
+      const color = confettiColors[i % confettiColors.length];
+      const rotate = Math.random() * 360;
+      confettiHtml += `<div class="confetti-piece" style="left:${left}%; background:${color}; animation-delay:${delay}s; animation-duration:${duration}s; transform:rotate(${rotate}deg);"></div>`;
+    }
+    const fwPositions = [{ x: 20, y: 30 }, { x: 75, y: 25 }, { x: 50, y: 45 }];
+    fwPositions.forEach((pos, i) => {
+      const color = confettiColors[i % confettiColors.length];
+      fireworksHtml += `<div class="firework" style="left:${pos.x}%; top:${pos.y}%; background:${color}; animation-delay:${i * 0.5}s;"></div>`;
+    });
+  }
+
+  const rowsHtml = [0, 1].map(slot => {
+    const teamIdx = state.showcase.teamIndices[slot];
+    const t = state.teams[teamIdx];
+    const items = state.showcase.items[slot] || [];
+    const total = items.reduce((sum, it) => sum + (Number(it.price) || 0), 0);
+    const guess = state.showcase.guesses[slot];
+    const busted = state.showcase.busted[slot];
+    const isWinner = winnerSlot === slot || winnerSlot === 'tie';
+    const guessLabel = guess === null || guess === undefined || guess === '' ? 'No guess' : money(guess);
+    const status = busted ? 'Busted' : (isWinner ? '🏆 Won' : 'Did not win');
+    return `
+      <div class="team-row">
+        <span class="dot" style="background:${t.color};"></span>
+        <span><strong>${escapeHtml(t.name)}</strong> — guessed ${guessLabel}, actual total ${money(total)} — ${status}</span>
+      </div>
+    `;
+  }).join('');
+
+  const championTitle = winnerSlot === 'tie' ? "It's a tie!" : 'Showcase winner!';
+
+  return `
+    ${headerHtml()}
+    ${hasWinner ? `
+      <div class="celebration">
+        ${confettiHtml}
+        ${fireworksHtml}
+        <div class="celebration-content">
+          <div class="trophy">🏆</div>
+          <p class="champion-name" style="font-size:2rem;">${championTitle}</p>
+        </div>
+      </div>
+    ` : `
+      <div class="card">
+        <h2>Showcase results</h2>
+        <p class="hint">Neither team came in under their showcase total this time. Try again with the items recombined into two new showcases.</p>
+      </div>
+    `}
+
+    <div class="card">
+      <h2>Results</h2>
+      <div class="team-list">${rowsHtml}</div>
+    </div>
+
+    <div class="btn-row">
+      ${!hasWinner ? `<button class="btn btn-secondary" id="showcase-try-again">Try again with a different combination</button>` : ''}
+      <button class="btn btn-primary" id="showcase-play-again">Play again</button>
+    </div>
+  `;
+}
+
+function bindShowcaseResults() {
+  const tryAgainBtn = document.getElementById('showcase-try-again');
+  if (tryAgainBtn) {
+    tryAgainBtn.addEventListener('click', () => {
+      reshuffleShowcaseItems();
+      state.showcase.currentPos = 0;
+      state.showcase.guesses = {};
+      state.showcase.revealed = {};
+      state.showcase.busted = {};
+      state.showcase.winnerSlot = null;
+      setState({ stage: 'showcasePlay' });
+    });
+  }
+
+  document.getElementById('showcase-play-again').addEventListener('click', () => {
+    clearRoundTimer();
+    state.teams.forEach(t => { t.score = 0; });
+    state.showcase.teamIndices = [];
+    state.showcase.currentPos = 0;
+    state.showcase.guesses = {};
+    state.showcase.revealed = {};
+    state.showcase.busted = {};
+    state.showcase.winnerSlot = null;
     setState({
       stage: 'ready',
       currentRoundIndex: 0,
