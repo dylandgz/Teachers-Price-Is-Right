@@ -63,7 +63,11 @@ Five sequential stages (`state.stage`): `setup1` → `setup2` → `ready` → `g
   thumbnail preview, falls back to a generic gift-box icon in-game if no image),
   and a **"Timer (sec)"** field — the preset countdown length for that round, used
   on the live game screen. Leave blank/0 for no timer on that round.
-- "Fill with sample items" button cycles through 8 demo items/prices for testing.
+- "Fill with sample items" button cycles through 8 demo items/prices for
+  testing; 5 of the 8 also carry a bundled sample photo (see "Sample images"
+  below) — the rest fall back to the generic gift-box icon.
+- "Load Q2 All Hands items" button loads the real event data (see "Q2 All
+  Hands event preset" below) instead of generic demo content.
 - Separate **"Tiebreaker items"** section below, same fields (including its own
   timer field), starts with one row, "add another tiebreaker item" to add more.
   Falls back to an improvised "Sudden death tiebreaker" item ($200–700 random
@@ -248,6 +252,44 @@ fields like `currentRoundIndex`, `guesses`, `revealed`, `revealPhase`,
 }
 ```
 
+## Sample images
+
+Bundled under `assets/sample-images/` and referenced by path from
+`SAMPLE_ITEMS` / `SAMPLE_SHOWCASE_ITEMS` in `app.js` — same reasoning as the
+audio files: static files cost nothing against the organizer's own
+`localStorage` image budget, only a short path string is ever saved to state.
+Coverage is intentionally partial (5 of 8 regular-round samples, 5 of 6
+showcase samples) — TV, mountain bike, and stand mixer don't have a bundled
+image and fall back to the gift-box icon. This isn't an oversight: genuinely
+public-domain (CC0) photography of common branded consumer products is hard
+to find without hitting trademarks, identifiable people, or mistagged
+commercial catalog photos, and several rejected candidates during sourcing
+confirmed this (an editorial cartoon, a hotel room with visible third-party
+branding, a photo with a "Harry Potter" logo on clothing, etc.). If adding
+more sample images later, keep screening this carefully rather than trusting
+a CC0 tag at face value.
+
+## Q2 All Hands event preset
+
+A dedicated one-click preset for the actual "Q2 All Hands" event, separate
+from the generic `SAMPLE_ITEMS`/`SAMPLE_SHOWCASE_ITEMS` demo data —
+`QALLHANDS_ROUND_ITEMS`, `QALLHANDS_TIEBREAKER_ITEMS`, and
+`QALLHANDS_SHOWCASE_ITEMS` in `app.js`, sourced from a CSV the organizer
+provided (real item names and prices for this specific event; no images —
+those get added manually per-item via the normal upload flow afterward).
+
+- **"Load Q2 All Hands items"** button on the Preload Items screen: prompts
+  for confirmation, sets round count to exactly 5 (to match the 5 real round
+  items), fills the 5 regular rounds and the one tiebreaker item (Foosball
+  Table), and sets **every one of those timers to 30 seconds** — a specific
+  requirement for this event, don't let it drift back to the general 60s/45s
+  defaults.
+- **"Load Q2 All Hands items"** button on the Showcase setup screen: fills
+  both showcases (5 items each) with the real data.
+- Both preserve any images already uploaded if clicked again (same
+  preserve-existing-image pattern as the generic sample-fill buttons), so
+  loading the preset doesn't wipe out photos the organizer already added.
+
 ## Local development
 
 ```
@@ -303,7 +345,8 @@ keep them in mind as the current expected behavior, not optional add-ons:
   round wins and the game championship, and a persistent bottom-left mute
   button controlling all of it.
 - Global "Reset game" footer control for a full restart at any point.
-
+- Bundled sample images (no `localStorage` cost) and a real event-specific
+  "Q2 All Hands" data preset, both loadable with one click from setup.
 
 
 ## Showcase round (optional, after all regular rounds)
@@ -339,10 +382,25 @@ actually implemented; don't reintroduce the old per-team-independent-win model.
   **hard-capped at exactly 2** — trying to check a third shows an alert and the
   checkbox stays unchecked. This is a deliberate, manual, real-time choice made
   after seeing how the regular rounds played out, not decided in advance.
-- The first team checked plays Showcase 1, the second plays Showcase 2
-  (`state.showcase.teamIndices[0]` / `[1]`). Team selection always starts fresh
+- **Pick order matters and is shown live**: as teams are checked, a badge
+  appears on each ("1st pick — chooses first" / "2nd pick") so it's unambiguous
+  who gets to choose which showcase next. Team selection always starts fresh
   each time this stage is entered from celebration (`teamIndices` reset to
   `[]`) — it is not remembered from a previous playthrough.
+- `state.showcase.firstPickerIdx` records which team gets first choice
+  (independent of final slot assignment — see below).
+
+### First-picking team chooses their showcase (`showcaseChoosePrize` stage)
+
+- The team recorded in `firstPickerIdx` sees **both showcases' full contents
+  side by side** — item names and photos, no prices — and picks "Play
+  Showcase 1" or "Play Showcase 2". The other team automatically gets
+  whichever showcase wasn't picked.
+- Implementation note: rather than a separate mapping, the choice directly
+  reorders `state.showcase.teamIndices` so `teamIndices[0]` always maps to
+  Showcase 1 and `teamIndices[1]` to Showcase 2 — every other part of the
+  showcase code (play, results) just reads `teamIndices[slot]` and doesn't
+  need to know a choice ever happened.
 
 ### Showcase ready screen (`showcaseReady`)
 
@@ -384,14 +442,12 @@ per-slot `won` field was replaced with a single `winnerSlot`.
 - Full celebration (confetti/fireworks, reused from the champion screen)
   **only if there's a winner** (including the tie case). Lists both teams'
   guess, actual total, and status (`🏆 Won` / `Did not win` / `Busted`).
-- **If there's no winner** (both busted): a **"Try again with a different
-  combination"** button appears. It pools both showcases' items together,
-  shuffles them (Fisher-Yates), and re-splits into two new showcases —
-  preserving each showcase's original item count, so the same organizer-built
-  items get recombined into new price totals without any new data entry — then
-  replays immediately with the *same two teams* (`reshuffleShowcaseItems()` in
-  `app.js`).
-- "Play again" (full game reset) is always available too, and resets scores
-  and showcase play-state back to the `ready` screen — but showcase **item**
-  setup persists across a rematch (like regular-round items do), so it doesn't
-  need to be rebuilt; only team selection and guesses reset.
+- **If there's no winner** (both teams busted): that's the end of the game —
+  no retry, no recombining items. This was deliberately simplified during
+  development; an earlier version offered a "try again with a different
+  combination" (pooling and reshuffling both showcases' items) but that was
+  removed entirely at the organizer's request. Don't reintroduce it.
+- "Play again" (full game reset) is the only option from here, and resets
+  scores and showcase play-state back to the `ready` screen — but showcase
+  **item** setup persists across a rematch (like regular-round items do), so
+  it doesn't need to be rebuilt; only team selection and guesses reset.

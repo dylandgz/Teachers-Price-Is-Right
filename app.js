@@ -9,19 +9,64 @@ const TEAM_DEFAULTS = [
 ];
 
 const SAMPLE_ITEMS = [
-  { name: '65" 4K smart TV', price: 649, description: 'Crisp picture, big screen, movie night upgrade.' },
-  { name: 'Stainless steel grill', price: 389, description: 'Backyard cookouts just got a lot better.' },
-  { name: 'Espresso machine', price: 799, description: 'Cafe-quality coffee without leaving the kitchen.' },
-  { name: 'Mountain bike', price: 459, description: 'Trail-ready wheels for weekend adventures.' },
-  { name: 'Weekend getaway package', price: 1250, description: 'Two nights away, all the relaxation.' },
-  { name: 'Stand mixer', price: 429, description: 'A baker\'s best friend, in your favorite color.' },
-  { name: 'Gaming laptop', price: 1099, description: 'Fast, portable, ready for anything.' },
-  { name: 'Patio furniture set', price: 899, description: 'Turn the backyard into a hangout spot.' }
+  { name: '65" 4K smart TV', price: 649, description: 'Crisp picture, big screen, movie night upgrade.', image: null },
+  { name: 'Stainless steel grill', price: 389, description: 'Backyard cookouts just got a lot better.', image: 'assets/sample-images/grill.jpg' },
+  { name: 'Espresso machine', price: 799, description: 'Cafe-quality coffee without leaving the kitchen.', image: 'assets/sample-images/espresso-machine.jpg' },
+  { name: 'Mountain bike', price: 459, description: 'Trail-ready wheels for weekend adventures.', image: null },
+  { name: 'Weekend getaway package', price: 1250, description: 'Two nights away, all the relaxation.', image: 'assets/sample-images/getaway-package.jpg' },
+  { name: 'Stand mixer', price: 429, description: 'A baker\'s best friend, in your favorite color.', image: null },
+  { name: 'Gaming laptop', price: 1099, description: 'Fast, portable, ready for anything.', image: 'assets/sample-images/gaming-laptop.jpg' },
+  { name: 'Patio furniture set', price: 899, description: 'Turn the backyard into a hangout spot.', image: 'assets/sample-images/patio-furniture.jpg' }
+];
+
+const SAMPLE_SHOWCASE_ITEMS = [
+  [
+    { name: 'Leather sofa', price: 899, image: 'assets/sample-images/showcase1-sofa.jpg' },
+    { name: 'Wood coffee table', price: 349, image: 'assets/sample-images/showcase1-coffee-table.jpg' },
+    { name: '55" smart TV', price: 549, image: null }
+  ],
+  [
+    { name: 'Stainless refrigerator', price: 1499, image: 'assets/sample-images/showcase2-refrigerator.jpg' },
+    { name: 'Washing machine', price: 699, image: 'assets/sample-images/showcase2-washer.jpg' },
+    { name: 'Built-in dishwasher', price: 549, image: 'assets/sample-images/showcase2-dishwasher.jpg' }
+  ]
+];
+
+/* ---- Q2 All Hands event preset (real event data, images added manually by organizer) ---- */
+
+const QALLHANDS_ROUND_ITEMS = [
+  { name: 'Keurig Coffee Variety Pack', price: 55 },
+  { name: 'GE Microwave', price: 135 },
+  { name: 'Uline Commercial Stapler', price: 115 },
+  { name: 'Flavia Creation 600 Coffee Machine', price: 2150 },
+  { name: 'Game Room Arcade Machine', price: 3299 }
+];
+
+const QALLHANDS_TIEBREAKER_ITEMS = [
+  { name: 'Foosball Table', price: 499 }
+];
+
+const QALLHANDS_SHOWCASE_ITEMS = [
+  [
+    { name: 'Dell Pro 16 Plus Laptop', price: 1345 },
+    { name: 'ViewSonic 24 inch Monitor', price: 160 },
+    { name: 'Logitech Keyboard and Mouse', price: 65 },
+    { name: 'Dell Docking Station', price: 199 },
+    { name: 'Noise Canceling Headphones - AirPods Max 2', price: 550 }
+  ],
+  [
+    { name: 'Hexy SitOnIt Office Chair', price: 265 },
+    { name: 'Standing Desk', price: 860 },
+    { name: 'Uline Water Cooler', price: 360 },
+    { name: 'Mini Fridge', price: 395 },
+    { name: 'Walking Pad Treadmill', price: 170 }
+  ]
 ];
 
 function defaultShowcaseState() {
   return {
     teamIndices: [],
+    firstPickerIdx: null,
     itemCounts: [3, 3],
     items: [[], []],
     currentPos: 0,
@@ -290,6 +335,7 @@ function render() {
     case 'celebration': app.innerHTML = renderCelebration(); bindCelebration(); break;
     case 'showcaseSetup': app.innerHTML = renderShowcaseSetup(); bindShowcaseSetup(); break;
     case 'showcaseChooseTeams': app.innerHTML = renderShowcaseChooseTeams(); bindShowcaseChooseTeams(); break;
+    case 'showcaseChoosePrize': app.innerHTML = renderShowcaseChoosePrize(); bindShowcaseChoosePrize(); break;
     case 'showcaseReady': app.innerHTML = renderShowcaseReady(); bindShowcaseReady(); break;
     case 'showcasePlay': app.innerHTML = renderShowcasePlay(); bindShowcasePlay(); break;
     case 'showcaseResults': app.innerHTML = renderShowcaseResults(); bindShowcaseResults(); break;
@@ -434,6 +480,7 @@ function renderSetup2() {
       <p class="hint">One item per round. Add a name, price, short description, optional photo, and a guess timer (in seconds). Leave the timer blank or 0 for no time limit. On game day, you'll just press "Start timer" to run the preset time for that round.</p>
       <div class="btn-row" style="margin-top:0; margin-bottom:10px;">
         <button class="btn btn-secondary" id="fill-sample">Fill with sample items</button>
+        <button class="btn btn-secondary" id="load-qallhands">Load Q2 All Hands items</button>
       </div>
       ${state.rounds.map((r, i) => renderItemRow(r, i, false)).join('')}
     </div>
@@ -504,7 +551,25 @@ function bindSetup2() {
   document.getElementById('fill-sample').addEventListener('click', () => {
     state.rounds = state.rounds.map((r, i) => {
       const sample = SAMPLE_ITEMS[i % SAMPLE_ITEMS.length];
-      return { name: sample.name, price: sample.price, description: sample.description, image: r.image || null, timeLimit: r.timeLimit || 60 };
+      return { name: sample.name, price: sample.price, description: sample.description, image: r.image || sample.image || null, timeLimit: r.timeLimit || 60 };
+    });
+    save();
+    render();
+  });
+
+  document.getElementById('load-qallhands').addEventListener('click', () => {
+    if (!confirm('Load the Q2 All Hands event items? This sets round count to 5 and replaces the current round and tiebreaker items with the event\'s real items and prices (images are not included — add those separately).')) {
+      return;
+    }
+    state.roundCount = 5;
+    ensureRoundRows();
+    state.rounds = state.rounds.map((r, i) => {
+      const item = QALLHANDS_ROUND_ITEMS[i];
+      return { name: item.name, price: item.price, description: r.description || '', image: r.image || null, timeLimit: 30 };
+    });
+    state.tiebreakerQueue = QALLHANDS_TIEBREAKER_ITEMS.map((item, i) => {
+      const existing = state.tiebreakerQueue[i];
+      return { name: item.name, price: item.price, description: (existing && existing.description) || '', image: (existing && existing.image) || null, timeLimit: 30 };
     });
     save();
     render();
@@ -1153,6 +1218,10 @@ function renderShowcaseSetup() {
     <div class="card">
       <h2>Showcase round setup</h2>
       <p class="hint">Build two showcases now. After the regular rounds finish, you'll pick which two teams play them — you don't need to know that yet.</p>
+      <div class="btn-row" style="margin-top:0;">
+        <button class="btn btn-secondary" id="fill-showcase-sample">Fill with sample items</button>
+        <button class="btn btn-secondary" id="load-qallhands-showcase">Load Q2 All Hands items</button>
+      </div>
     </div>
     ${[0, 1].map(slot => `
       <div class="card">
@@ -1210,6 +1279,43 @@ function bindShowcaseSetup() {
     });
   });
 
+  document.getElementById('fill-showcase-sample').addEventListener('click', () => {
+    [0, 1].forEach(slot => {
+      const samples = SAMPLE_SHOWCASE_ITEMS[slot];
+      state.showcase.itemCounts[slot] = samples.length;
+      state.showcase.items[slot] = samples.map((s, i) => {
+        const existing = (state.showcase.items[slot] || [])[i];
+        return {
+          name: s.name,
+          price: s.price,
+          image: (existing && existing.image) || s.image || null
+        };
+      });
+    });
+    save();
+    render();
+  });
+
+  document.getElementById('load-qallhands-showcase').addEventListener('click', () => {
+    if (!confirm('Load the Q2 All Hands showcase items? This replaces both showcases with the event\'s real items and prices (images are not included — add those separately).')) {
+      return;
+    }
+    [0, 1].forEach(slot => {
+      const items = QALLHANDS_SHOWCASE_ITEMS[slot];
+      state.showcase.itemCounts[slot] = items.length;
+      state.showcase.items[slot] = items.map((it, i) => {
+        const existing = (state.showcase.items[slot] || [])[i];
+        return {
+          name: it.name,
+          price: it.price,
+          image: (existing && existing.image) || null
+        };
+      });
+    });
+    save();
+    render();
+  });
+
   document.getElementById('cancel-showcase-setup').addEventListener('click', () => {
     setState({ stage: state.showcaseSetupOrigin === 'ready' ? 'ready' : 'celebration' });
   });
@@ -1226,15 +1332,24 @@ function renderShowcaseChooseTeams() {
     ${headerHtml()}
     <div class="card">
       <h2>Showcase round — choose two teams</h2>
-      <p class="hint">Pick exactly two teams to play the showcase. The first team you pick plays Showcase 1, the second plays Showcase 2.</p>
+      <p class="hint">Pick exactly two teams to play the showcase. Pick order matters — whichever team you check <strong>first</strong> gets first choice of which showcase to play next.</p>
       <div class="showcase-team-picker">
-        ${state.teams.map((t, i) => `
-          <label class="showcase-team-option" style="border-color:${t.color};">
-            <input type="checkbox" data-idx="${i}" ${state.showcase.teamIndices.includes(i) ? 'checked' : ''} />
-            <span class="dot" style="background:${t.color};"></span>
-            ${escapeHtml(t.name)}
-          </label>
-        `).join('')}
+        ${state.teams.map((t, i) => {
+          const pickPos = state.showcase.teamIndices.indexOf(i);
+          const badge = pickPos === 0
+            ? `<span class="pick-order-badge pick-order-first">1st pick — chooses first</span>`
+            : pickPos === 1
+              ? `<span class="pick-order-badge pick-order-second">2nd pick</span>`
+              : '';
+          return `
+            <label class="showcase-team-option" style="border-color:${t.color};">
+              <input type="checkbox" data-idx="${i}" ${pickPos !== -1 ? 'checked' : ''} />
+              <span class="dot" style="background:${t.color};"></span>
+              ${escapeHtml(t.name)}
+              ${badge}
+            </label>
+          `;
+        }).join('')}
       </div>
       <div class="btn-row">
         <button class="btn btn-secondary" id="back-to-celebration">Back</button>
@@ -1262,6 +1377,7 @@ function bindShowcaseChooseTeams() {
       }
       state.showcase.teamIndices = list;
       save();
+      render();
     });
   });
 
@@ -1274,7 +1390,68 @@ function bindShowcaseChooseTeams() {
       alert('Select exactly two teams to continue.');
       return;
     }
-    setState({ stage: 'showcaseReady' });
+    state.showcase.firstPickerIdx = state.showcase.teamIndices[0];
+    setState({ stage: 'showcaseChoosePrize' });
+  });
+}
+
+/* ---- Showcase round: first team chooses which showcase to play ---- */
+
+function renderShowcaseChoosePrize() {
+  const firstIdx = state.showcase.firstPickerIdx;
+  const t = state.teams[firstIdx];
+
+  const showcaseCard = (slot) => {
+    const items = state.showcase.items[slot] || [];
+    const itemsGrid = items.map(it => {
+      const img = it.image
+        ? `<img class="showcase-item-image" src="${it.image}" alt="${escapeHtml(it.name)}" />`
+        : `<div class="showcase-item-fallback">${fallbackIconSvg(56)}</div>`;
+      return `
+        <div class="showcase-item-tile">
+          ${img}
+          <div class="showcase-item-name">${escapeHtml(it.name) || 'Mystery item'}</div>
+        </div>
+      `;
+    }).join('');
+    return `
+      <div class="card showcase-prize-card">
+        <h3>Showcase ${slot + 1}</h3>
+        <div class="showcase-item-grid">${itemsGrid}</div>
+        <button class="btn btn-primary showcase-prize-option" data-choice="${slot + 1}" style="margin-top:16px;">Play Showcase ${slot + 1}</button>
+      </div>
+    `;
+  };
+
+  return `
+    ${headerHtml()}
+    <div class="card">
+      <h2 style="color:${t.color};">${escapeHtml(t.name)}, choose your showcase</h2>
+      <p class="hint">${escapeHtml(t.name)} gets first pick — no prices shown, just what's in each. Whichever showcase they don't choose goes to the other team.</p>
+    </div>
+    <div class="showcase-prize-picker">
+      ${showcaseCard(0)}
+      ${showcaseCard(1)}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="back-to-choose-teams">Back</button>
+    </div>
+  `;
+}
+
+function bindShowcaseChoosePrize() {
+  document.querySelectorAll('.showcase-prize-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const choice = parseInt(btn.dataset.choice, 10);
+      const firstIdx = state.showcase.firstPickerIdx;
+      const otherIdx = state.showcase.teamIndices.find(i => i !== firstIdx);
+      state.showcase.teamIndices = choice === 1 ? [firstIdx, otherIdx] : [otherIdx, firstIdx];
+      setState({ stage: 'showcaseReady' });
+    });
+  });
+
+  document.getElementById('back-to-choose-teams').addEventListener('click', () => {
+    setState({ stage: 'showcaseChooseTeams' });
   });
 }
 
@@ -1336,7 +1513,7 @@ function renderShowcasePlay() {
   const itemsGrid = items.map(it => {
     const img = it.image
       ? `<img class="showcase-item-image" src="${it.image}" alt="${escapeHtml(it.name)}" />`
-      : `<div class="showcase-item-fallback">${fallbackIconSvg(36)}</div>`;
+      : `<div class="showcase-item-fallback">${fallbackIconSvg(56)}</div>`;
     return `
       <div class="showcase-item-tile">
         ${img}
@@ -1450,19 +1627,6 @@ function advanceShowcase() {
 
 /* ---- Showcase round: results ---- */
 
-function reshuffleShowcaseItems() {
-  const pool = [...state.showcase.items[0], ...state.showcase.items[1]];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = pool[i];
-    pool[i] = pool[j];
-    pool[j] = tmp;
-  }
-  const count0 = state.showcase.itemCounts[0];
-  state.showcase.items[0] = pool.slice(0, count0);
-  state.showcase.items[1] = pool.slice(count0);
-}
-
 function renderShowcaseResults() {
   const winnerSlot = state.showcase.winnerSlot;
   const hasWinner = winnerSlot === 0 || winnerSlot === 1 || winnerSlot === 'tie';
@@ -1520,7 +1684,7 @@ function renderShowcaseResults() {
     ` : `
       <div class="card">
         <h2>Showcase results</h2>
-        <p class="hint">Neither team came in under their showcase total this time. Try again with the items recombined into two new showcases.</p>
+        <p class="hint">Neither team came in under their showcase total this time — that's the end of the game.</p>
       </div>
     `}
 
@@ -1530,26 +1694,12 @@ function renderShowcaseResults() {
     </div>
 
     <div class="btn-row">
-      ${!hasWinner ? `<button class="btn btn-secondary" id="showcase-try-again">Try again with a different combination</button>` : ''}
       <button class="btn btn-primary" id="showcase-play-again">Play again</button>
     </div>
   `;
 }
 
 function bindShowcaseResults() {
-  const tryAgainBtn = document.getElementById('showcase-try-again');
-  if (tryAgainBtn) {
-    tryAgainBtn.addEventListener('click', () => {
-      reshuffleShowcaseItems();
-      state.showcase.currentPos = 0;
-      state.showcase.guesses = {};
-      state.showcase.revealed = {};
-      state.showcase.busted = {};
-      state.showcase.winnerSlot = null;
-      setState({ stage: 'showcasePlay' });
-    });
-  }
-
   document.getElementById('showcase-play-again').addEventListener('click', () => {
     clearRoundTimer();
     state.teams.forEach(t => { t.score = 0; });
